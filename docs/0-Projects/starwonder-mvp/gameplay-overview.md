@@ -36,12 +36,13 @@ The map is the star of the show. Full generation details live in
 
 - **1024 sectors** on an order-5 Hilbert curve (32×32 grid), laid out as a centred-Sol
   **pinwheel** (Sol = Sector #0 at the centre). Neighbours are truly adjacent; regions are
-  tidy nested squares. Every sector is travellable; a **star** is a per-sector overlay
-  (~half of sectors, tunable), the rest deep-space waypoints.
+  tidy nested squares. Every sector is travellable; whether a sector is **inhabited** (a
+  settled star system — see below) or **uninhabited** (empty deep space) is a per-sector roll
+  (~half inhabited, tunable).
 - **Hierarchy & address:** Galaxy → 16 **Regions** (64 sectors each) → **Sector** (one cell,
-  maybe a star). Addresses read `Region 7 · Sector #412`. Adjacent sectors are joined by
+  inhabited or not). Addresses read `Region 7 · Sector #412`. Adjacent sectors are joined by
   probabilistic **lanes**; full model in [Fractal Galaxy Map](../../2-Resources/fractal-galaxy-map.md).
-- **Lanes:** stars connect to local neighbors only — most travel is short hops. Lane density
+- **Lanes:** sectors connect to local neighbors only — most travel is short hops. Lane density
   is **distance-weighted** (core bias): a dense, safe heart around Sol fraying toward the rim.
 - **Wormholes:** ~30–50 long-range shortcuts overlaid on top. They're how you cross the
   galaxy quickly, so their mouths are strategically precious.
@@ -49,22 +50,22 @@ The map is the star of the show. Full generation details live in
   is where it's lucrative *and* lethal. Anything unreachable from Sol is simply **void** (it
   doesn't exist); the playable galaxy *is* Sol's reachable set.
 
-### What's at a star — it's all about the stations
+### What's in an inhabited sector — it's all about the stations
 
 You **never land on planets**. Everything you interact with is a **station in orbit**.
 Planets (and the star itself) are *scenery and flavor* — a station orbiting an ocean world
 deals in Organics; one by a metal-rich rock pumps Fuel Ore — but you dock at the station,
 not the surface.
 
-A star has a **type** and may host one or more stations:
+An inhabited sector has a **star type** and may host one or more stations:
 
 - **Trade stations** — the economy: buy/sell commodities (see §5). Most common.
 - **Havens** — safe hubs: buy/repair/upgrade ships, store goods, take missions. At least
   one **home Haven** is a guaranteed safe zone.
 - **Shipyards / specialist stations** — sell modules, ships, blueprints; faction-gated.
 - **Outposts** — player- or corp-built stations (see §10) — the ownable power base.
-- Many stars are just **empty waypoints** (lanes/wormholes + maybe an NPC passing through),
-  with planets as pure backdrop.
+…and the other ~half of sectors are **uninhabited** — no station at all, just open space you
+pass through (lanes/wormholes + maybe an NPC in transit), with any planets as pure backdrop.
 
 > **Design note:** collapsing "ports + planets + bases" into one concept — *the orbital
 > station* — kills a whole interaction mode (land/take-off) and keeps the UI to a single

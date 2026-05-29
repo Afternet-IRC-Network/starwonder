@@ -15,9 +15,9 @@ We borrow two things:
 1. **Hilbert-curve placement** → a 2D galaxy where neighbors are genuinely adjacent and
    regions form tidy nested squares (great for "sector" identity and faction territory).
 2. **Recursive nesting** → free hierarchy. The same curve gives us galaxy → region →
-   sector → star without any extra data structure.
+   sector → inhabited system without any extra data structure.
 
-## Sizing for ~1000 stars
+## Sizing for ~1000 sectors
 
 A Hilbert curve of **order *n*** fills a `2^n × 2^n` grid with `4^n` cells.
 
@@ -28,10 +28,13 @@ A Hilbert curve of **order *n*** fills a `2^n × 2^n` grid with `4^n` cells.
 | 6     | 64×64   | 4096  |
 
 **Order 5 (1024 cells) is the sweet spot.** Every one of the 1024 cells is a **travellable
-sector**; whether a sector also hosts a **star** is a per-sector probability roll (the
-"star likelihood" knob, ~0.5 in current tuning). Empty sectors are deep-space waypoints you
-still fly through — stars are an *overlay*, not the travel graph. (Earlier drafts placed
-stars in ~1000 cells and only connected star-to-star; superseded — see *Travel graph* below.)
+sector**; whether a sector is **inhabited** (a settled star system — a star with planets,
+where stations, NPCs, trade and life happen) or **uninhabited** (empty deep space you still
+fly through) is a per-sector probability roll — the **inhabited likelihood** knob, ~0.47 in
+current tuning. Habitation is an *overlay* on the sector grid, not the travel graph itself;
+uninhabited sectors are still real places with lanes and the occasional passing ship.
+(Earlier drafts placed stars in ~1000 cells and only connected star-to-star; superseded — see
+*Travel graph* below.)
 
 Nesting then falls out for free:
 
@@ -115,7 +118,7 @@ map.
 A pure local graph is a slog to traverse (could be 30+ hops corner to corner). We sprinkle
 a sparse set of **wormholes** — long-range edges — to make the galaxy navigable:
 
-- **Count:** ~3–5% of star count (≈ 30–50 wormholes for 1000 stars).
+- **Count:** ~3–5% of sector count (≈ 30–50 wormholes for ~1000 sectors).
 - **Bias toward distance:** prefer endpoints that are far apart on the grid (e.g. weight by
   Euclidean distance, or require endpoints in different regions). This makes them feel like
   genuine shortcuts, not redundant local links.
@@ -131,7 +134,7 @@ mouths and you control fast travel.
 
 Players start at Sol, so we make that literal: **the universe is exactly the set of sectors
 reachable from Sol** (BFS over open lanes + wormholes). Anything the BFS can't reach simply
-**does not exist** — no star, no lanes, no wormhole, blank on the map. There are no orphan
+**does not exist** — inhabited or not, no lanes, no wormhole, blank on the map. There are no orphan
 islands to wonder about; the frontier just dissolves into void where the lattice gives out.
 With core bias high and `p` modest, the rim naturally trails off into nothing — that's the
 intended look.
@@ -144,7 +147,7 @@ surfaces it). A smaller-but-whole universe is fine; a 4-sector one isn't.
 
 ## Determinism & persistence
 
-The entire galaxy — sector coords, regions, star overlay, lanes, wormholes, initial
+The entire galaxy — sector coords, regions, habitation overlay, lanes, wormholes, initial
 station/planet/NPC seeds — is a pure function of **`(seed, generation settings)`**. So we
 **don't materialise the map**: we store only the seed + settings and compute sector state on
 demand. The mutable game then layers **sparse override records** on top (a station built,
@@ -155,10 +158,10 @@ in the technical doc. New seasons = a new seed.
 
 **Interactive reference:** the admin/debug map mockup
 [`map-admin.html`](../0-Projects/starwonder-mvp/mockups/map-admin.html) implements all of the
-above live — pinwheel layout, hash lanes, the star / `p` / **core-bias** / wormhole knobs, the
-danger heat overlay, the void-everything-unreachable rendering, the reachable-size readout and
-a seed finder. Current tuned defaults: **star likelihood 0.47, lane open prob. 0.44, core bias
-0.89, ~50 wormholes.**
+above live — pinwheel layout, hash lanes, the inhabited / `p` / **core-bias** / wormhole knobs,
+the danger heat overlay, the void-everything-unreachable rendering, the reachable-size readout
+and a seed finder. Current tuned defaults: **inhabited likelihood 0.47, lane open prob. 0.44,
+core bias 0.89, ~50 wormholes.**
 
 ## Why this is also great UX on a phone
 
