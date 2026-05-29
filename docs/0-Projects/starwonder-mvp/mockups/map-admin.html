@@ -260,11 +260,21 @@ function draw(){
   const s=M;
   const selRoot = selected!=null ? s.find(selected) : null;
 
-  // region tint (16 nested 8×8 squares = d>>6)
+  // region tint (16 clean 8×8 squares = d>>6) — fill + outline + label
   if(C.regionTint.checked){
     for(let d=0;d<N;d++){const{x,y}=XY[d];const reg=d>>6;
-      ctx.fillStyle=`hsla(${reg*(360/16)} 50% 50% / 0.05)`;
+      ctx.fillStyle=`hsla(${reg*22.5} 65% 52% / 0.16)`;
       ctx.fillRect(MARGIN+x*CELL,MARGIN+y*CELL,CELL,CELL);}
+    const bb={};   // region -> [minx,miny,maxx,maxy]
+    for(let d=0;d<N;d++){const{x,y}=XY[d];const r=d>>6;const b=bb[r]||(bb[r]=[x,y,x,y]);
+      b[0]=Math.min(b[0],x);b[1]=Math.min(b[1],y);b[2]=Math.max(b[2],x);b[3]=Math.max(b[3],y);}
+    ctx.lineWidth=1; ctx.textBaseline='top'; ctx.textAlign='left'; ctx.font='10px monospace';
+    for(const r in bb){const[minx,miny,maxx,maxy]=bb[r];
+      ctx.strokeStyle=`hsla(${r*22.5} 75% 62% / 0.55)`;
+      ctx.strokeRect(MARGIN+minx*CELL,MARGIN+miny*CELL,(maxx-minx+1)*CELL,(maxy-miny+1)*CELL);
+      ctx.fillStyle=`hsla(${r*22.5} 80% 72% / 0.7)`;
+      ctx.fillText('R'+(+r+1),MARGIN+minx*CELL+3,MARGIN+miny*CELL+2);}
+    ctx.textBaseline='alphabetic';
   }
 
   // blocked lanes (under)
@@ -329,7 +339,9 @@ function draw(){
 }
 
 // ---------- interaction ----------
-function addr(d){return 'R'+(d>>6)+' · S'+((d>>2)&15)+' · #'+d;}   // S = sector within region (0-15)
+// region 1-16 (was R+S); the cell id #d is the "sector"
+function addr(d){return 'Region '+((d>>6)+1)+' · Sector #'+d;}
+function addrShort(d){return 'R'+((d>>6)+1)+'·#'+d;}
 cv.addEventListener('click',e=>{
   const rect=cv.getBoundingClientRect();
   const mx=e.clientX-rect.left, my=e.clientY-rect.top;
@@ -340,7 +352,7 @@ cv.addEventListener('click',e=>{
   const root=M.find(best), reach=M.size[root]||1;
   const{x,y}=XY[best];
   const whHere=M.wormholes.filter(w=>w.a===best||w.b===best)
-    .map(w=>{const o=w.a===best?w.b:w.a;return '#'+o+' ('+addr(o).split(' · ').slice(0,2).join('·')+')';});
+    .map(w=>{const o=w.a===best?w.b:w.a;return addrShort(o);});
   const solDist=M.dist[best];
   const solLine = best===0
     ? '<span class="good">★ this is Sol</span>'
