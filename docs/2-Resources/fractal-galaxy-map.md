@@ -84,6 +84,32 @@ But not every neighbour link is open. Rather than store a lane table, we decide 
 Result: a richly-connected but **geographically honest** map, tunable from "frontier
 archipelago" to "solid continent" with a single knob.
 
+### Core bias (distance-weighted lanes)
+
+A single `p` makes the whole map equally connected. We tilt it by **as-the-crow-flies
+distance from Sol** so the **core is denser and the rim frays**: for a lane whose midpoint
+sits at normalised distance `t` (0 at Sol, 1 at the farthest rim), the effective open prob is
+
+```
+p_eff = clamp(p · (1 + bias · (0.5 − t)),  0, 1)
+```
+
+Because it's **centred at `t = 0.5`**, the galaxy-wide *mean* open prob stays ≈ `p` — the
+`bias` knob only *redistributes* connectivity (inner half a touch denser, outer half rougher)
+rather than globally raising or lowering it. `bias = 0` is the old uniform behaviour. `p_eff`
+depends only on the two cells' fixed positions, so lanes stay deterministic, bidirectional and
+stateless. Current tuning leans hard on it (**bias 0.89**) for a solid heart and a dissolving
+frontier.
+
+### Danger (derived from the same gradient)
+
+The same Sol-distance field defines a **danger level**, on a curve so the inner third stays
+safe and risk climbs steeply toward the rim: `danger = t^1.7`, bucketed into **Peaceful**
+(inner ⅓) → **Medium** (middle ⅓) → **Dangerous** (next ⅙) → **Very dangerous** (outer ⅙).
+This is the hook for spawn tables, loot, NPC aggression and economy later — the frontier is
+where it's lucrative and lethal. Rendered as a green-core → red-rim heat overlay in the admin
+map.
+
 ## Wormhole overlay
 
 A pure local graph is a slog to traverse (could be 30+ hops corner to corner). We sprinkle
@@ -101,13 +127,20 @@ a sparse set of **wormholes** — long-range edges — to make the galaxy naviga
 The wormhole graph is what makes regions strategically valuable: control the wormhole
 mouths and you control fast travel.
 
-## Sol-reachability constraint (generation acceptance)
+## The universe = Sol's reachable set (void elsewhere)
 
-Because lanes are probabilistic, there's a small chance Sol lands in a stranded pocket (we've
-seen a seed strand Sol in just 4 sectors). Players start at Sol, so universe generation
-**rejects any seed where < 90% of sectors are reachable from Sol** (BFS over open lanes +
-wormholes). Pick/scan seeds until the threshold is met. Some sectors being unreachable is fine
-and intended (frontier islands) — but the bulk of the galaxy must be reachable from home.
+Players start at Sol, so we make that literal: **the universe is exactly the set of sectors
+reachable from Sol** (BFS over open lanes + wormholes). Anything the BFS can't reach simply
+**does not exist** — no star, no lanes, no wormhole, blank on the map. There are no orphan
+islands to wonder about; the frontier just dissolves into void where the lattice gives out.
+With core bias high and `p` modest, the rim naturally trails off into nothing — that's the
+intended look.
+
+This subsumes the old "≥ 90% reachable or reject the seed" rule: unreachable cells aren't a
+failure to screen out, they're void by definition. The only remaining acceptance concern is
+**size** — a pathological seed could strand Sol in a tiny pocket — so generation still checks
+the reachable set is **large enough to be a galaxy** (and the admin seed-finder/readout
+surfaces it). A smaller-but-whole universe is fine; a 4-sector one isn't.
 
 ## Determinism & persistence
 
@@ -122,9 +155,10 @@ in the technical doc. New seasons = a new seed.
 
 **Interactive reference:** the admin/debug map mockup
 [`map-admin.html`](../0-Projects/starwonder-mvp/mockups/map-admin.html) implements all of the
-above live — pinwheel layout, hash lanes, the `p` / star / wormhole knobs, the Sol-reachability
-readout and a seed finder. Current tuned defaults: **star likelihood 0.50, lane open prob.
-0.55, ~50 wormholes.**
+above live — pinwheel layout, hash lanes, the star / `p` / **core-bias** / wormhole knobs, the
+danger heat overlay, the void-everything-unreachable rendering, the reachable-size readout and
+a seed finder. Current tuned defaults: **star likelihood 0.47, lane open prob. 0.44, core bias
+0.89, ~50 wormholes.**
 
 ## Why this is also great UX on a phone
 

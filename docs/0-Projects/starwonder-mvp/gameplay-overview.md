@@ -41,9 +41,13 @@ The map is the star of the show. Full generation details live in
 - **Hierarchy & address:** Galaxy → 16 **Regions** (64 sectors each) → **Sector** (one cell,
   maybe a star). Addresses read `Region 7 · Sector #412`. Adjacent sectors are joined by
   probabilistic **lanes**; full model in [Fractal Galaxy Map](../../2-Resources/fractal-galaxy-map.md).
-- **Lanes:** stars connect to local neighbors only — most travel is short hops.
+- **Lanes:** stars connect to local neighbors only — most travel is short hops. Lane density
+  is **distance-weighted** (core bias): a dense, safe heart around Sol fraying toward the rim.
 - **Wormholes:** ~30–50 long-range shortcuts overlaid on top. They're how you cross the
   galaxy quickly, so their mouths are strategically precious.
+- **Danger rises with distance from Sol** (Peaceful core → Very dangerous rim) — the frontier
+  is where it's lucrative *and* lethal. Anything unreachable from Sol is simply **void** (it
+  doesn't exist); the playable galaxy *is* Sol's reachable set.
 
 ### What's at a star — it's all about the stations
 

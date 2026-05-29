@@ -220,7 +220,7 @@ So a brand-new galaxy is ~one row, and the DB grows only where players actually 
 ```
 universes      (id PK, seed text, settings_jsonb, active bool, created_by, created_at)
                  -- settings_jsonb = the admin's slider values (§11):
-                 --   { starProb, laneP, wormholeCount, planetProbs, npcDensity, ... }
+                 --   { starProb, laneP, coreBias, wormholeCount, planetProbs, npcDensity, ... }
 invites        (code PK, created_by, used_by, used_at, expires_at)
 players        (id PK, auth_uid, handle, credits, energy, energy_updated_at,
                 energy_cap, energy_rate, ship_id, corp_id, created_at, last_seen)
@@ -325,23 +325,32 @@ functions of `(seed, settings, sector_id)`:
    #0** is dead-centre; gives each sector its `(x,y)`, region (1–16), and arm.
 2. **Star overlay** — a per-sector probability roll (`starProb`); empty sectors remain
    travellable deep-space waypoints.
-3. **Lanes** — for each cardinal-neighbour pair, open iff `hash(seed·min-max) / MAX < laneP`
-   (stateless, bidirectional — no stored edges).
+3. **Lanes** — for each cardinal-neighbour pair, open iff `hash(seed·min-max) / MAX < p_eff`,
+   where `p_eff = clamp(laneP · (1 + coreBias·(0.5 − t)), 0, 1)` tilts the open prob by the
+   lane's normalised distance-from-Sol `t` (centred at `t=0.5`, so the mean stays ≈ `laneP`):
+   **denser core, frayed rim** (stateless, bidirectional — no stored edges).
 4. **Wormholes** — ~`wormholeCount` seeded long-range, distance-biased edges.
-5. **Stations / planets / NPC spawns** — placed by sector/star type from the seed
+5. **Void / reachable set** — BFS from Sol over open lanes + wormholes; **sectors Sol can't
+   reach simply don't exist** (no star, lanes or wormhole — blank). The universe *is* Sol's
+   reachable set; the frontier dissolves into void rather than leaving orphan islands.
+6. **Danger** — derived from the same Sol-distance field on a curve (`danger = t^1.7`),
+   bucketed Peaceful → Medium → Dangerous → Very dangerous (inner ⅓ / middle ⅓ / next ⅙ /
+   outer ⅙). Drives later spawn/loot/economy risk; the frontier is lucrative *and* lethal.
+7. **Stations / planets / NPC spawns** — placed by sector/star type from the seed
    (probabilities are admin settings), with a guaranteed safe **home Haven at/near Sol**.
-6. **Acceptance check** — **reject the seed unless ≥ 90% of sectors are reachable from Sol**
-   (BFS over open lanes + wormholes). Some unreachable frontier pockets are fine and intended;
-   the bulk must be reachable from home.
+8. **Acceptance check** — unreachable cells are *void by definition* (not a seed to reject), so
+   the only screen is **size**: ensure Sol's reachable set is large enough to be a galaxy (a
+   pathological seed could strand Sol in a tiny pocket). The admin readout/seed-finder surfaces
+   it. A smaller-but-whole universe is fine.
 
 ### The admin "universe builder"
 
 Admins create a universe through a screen like the [`map-admin.html`](mockups/map-admin.html)
 mockup — a live map plus **tabbed settings** (galaxy/lanes today; planet probabilities, NPC
 density, economy, factions as features land). The admin tunes sliders, watches the
-connectivity / Sol-reachability readout, picks a seed that passes the ≥90% check (there's a
-seed-finder), and **saves `{seed, settings}` as the active `universes` row.** That single row
-*is* the generated galaxy — no batch write.
+connectivity / reachable-size / danger readouts, picks a seed whose reachable universe is a
+healthy size (there's a seed-finder), and **saves `{seed, settings}` as the active `universes`
+row.** That single row *is* the generated galaxy — no batch write.
 
 ### Live state = baseline + overrides
 
