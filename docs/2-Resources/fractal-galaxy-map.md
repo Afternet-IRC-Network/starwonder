@@ -27,30 +27,62 @@ A Hilbert curve of **order *n*** fills a `2^n × 2^n` grid with `4^n` cells.
 | **5** | **32×32** | **1024** |
 | 6     | 64×64   | 4096  |
 
-**Order 5 (1024 cells) is the sweet spot** for ~1000 stars: place a star in ~1000 of the
-1024 cells (skip a few at random to avoid a perfectly full grid feeling artificial).
+**Order 5 (1024 cells) is the sweet spot.** Every one of the 1024 cells is a **travellable
+sector**; whether a sector also hosts a **star** is a per-sector probability roll (the
+"star likelihood" knob, ~0.5 in current tuning). Empty sectors are deep-space waypoints you
+still fly through — stars are an *overlay*, not the travel graph. (Earlier drafts placed
+stars in ~1000 cells and only connected star-to-star; superseded — see *Travel graph* below.)
 
 Nesting then falls out for free:
 
 - **Galaxy** = the whole 32×32 grid.
-- **Region** = each order-3 block → a 4×4 arrangement of **16 regions**, ~64 stars each.
-- **Sector** = each order-4 block → **256 sectors** of ~4 stars each (handy for naming /
-  addressing, e.g. `R7·S3·#412`).
+- **Region** = each order-3 block → a 4×4 arrangement of **16 regions**, 64 sectors each.
+- **(Order-4 blocks)** → 256 quads of ~4 cells each — a structural sub-grouping the curve
+  gives for free, but **not** surfaced in addressing (the address is Region + cell id; see
+  *Addressing* below). The cell itself is the **Sector** you travel to.
 
 Numbers are tunable; this is just a clean default.
 
-## Base star-lane graph
+## Layout: centred-Sol pinwheel (locked)
 
-Stars are connected by **lanes** derived from the curve, *not* by long-range links:
+A single Hilbert curve anchors index 0 in a **corner** — intrinsic to the construction. We
+want **Sol at the centre** (players start there), so we use a **pinwheel**: four order-4
+Hilbert curves, one per 16×16 quadrant, each oriented so its `#0` corner meets the others at
+the map centre. Result: **Sol = Sector #0 sits dead-centre**, the galaxy fans out in four
+self-similar arms, and we keep everything we actually rely on — local spatial adjacency,
+deterministic generation, and tidy nested **8×8 square regions**. The only thing traded away
+is a single unbroken curve spanning all 1024 cells, which we use for nothing (connectivity
+comes from the lane graph below). Verified: bijective (no gaps/collisions), all 16 regions
+stay clean 8×8 squares.
 
-- **Curve adjacency:** each star links to its predecessor/successor along the Hilbert
-  index (guarantees the whole galaxy is one connected path — no orphans).
-- **Spatial adjacency:** also link stars whose grid cells are orthogonally adjacent
-  (Manhattan distance 1). This thickens the graph from a bare line into a web while
-  keeping it *local* — most travel is short hops between neighbors.
+### Addressing
 
-Result: a richly-connected but **geographically honest** map. Crossing the galaxy the
-"natural" way takes many hops — which is exactly the problem wormholes solve.
+`Region <1–16> · Sector #<0–1023>`. **Region** = `(d >> 6) + 1` (the 16 nested 8×8 squares;
+`region >> 2` is the quadrant/arm). **Sector** = the cell id `d` itself (0–1023) — the unit
+you travel between and the thing the DB can override. (The old intermediate 256-"sector"
+level folded into the region; "sector" now means the individual cell.)
+
+## Travel graph: cardinal lanes, statelessly blocked (locked)
+
+Every sector connects to its **cardinal grid neighbours** (N/E/S/W). Because the pinwheel
+keeps neighbours spatially adjacent, "north/east/south/west" is just `(x±1, y)` / `(x, y±1)` —
+even when those cells are far apart in `#` index. Most travel is short local hops; crossing
+the galaxy the natural way takes many of them — exactly what wormholes solve.
+
+But not every neighbour link is open. Rather than store a lane table, we decide each lane
+**deterministically from a hash**:
+
+- For a potential lane between sectors `a` and `b`, form the **canonical key** `min-max` of
+  their **physical cell ids**, fold in the universe seed, hash it, and open the lane iff
+  `hash / MAX < p` (the *lane open probability* knob, ~0.55 in current tuning).
+- **Canonical ordering ⇒ bidirectional for free**, and the graph is **stateless** — server,
+  client, tick and bot all derive identical lanes from `(seed, p)` with **no stored edges**.
+  Key on the *physical* cell id (not any display number) so re-labelling never re-rolls a map.
+- Lowering `p` fragments the galaxy into pockets and wormhole-gated enclaves; raising it
+  toward 1.0 makes one dense blob. (Bond-percolation threshold ≈ 0.5 on this lattice.)
+
+Result: a richly-connected but **geographically honest** map, tunable from "frontier
+archipelago" to "solid continent" with a single knob.
 
 ## Wormhole overlay
 
@@ -69,12 +101,30 @@ a sparse set of **wormholes** — long-range edges — to make the galaxy naviga
 The wormhole graph is what makes regions strategically valuable: control the wormhole
 mouths and you control fast travel.
 
-## Determinism
+## Sol-reachability constraint (generation acceptance)
 
-Generate the whole map from a **single seed** so it's reproducible (regenerate identical
-galaxies, diff map versions, debug pathfinding). Persist the generated graph to the DB;
-don't regenerate live. See the map-generation pipeline in the
-[technical doc](../0-Projects/starwonder-mvp/technical-infrastructure.md#map-generation-pipeline).
+Because lanes are probabilistic, there's a small chance Sol lands in a stranded pocket (we've
+seen a seed strand Sol in just 4 sectors). Players start at Sol, so universe generation
+**rejects any seed where < 90% of sectors are reachable from Sol** (BFS over open lanes +
+wormholes). Pick/scan seeds until the threshold is met. Some sectors being unreachable is fine
+and intended (frontier islands) — but the bulk of the galaxy must be reachable from home.
+
+## Determinism & persistence
+
+The entire galaxy — sector coords, regions, star overlay, lanes, wormholes, initial
+station/planet/NPC seeds — is a pure function of **`(seed, generation settings)`**. So we
+**don't materialise the map**: we store only the seed + settings and compute sector state on
+demand. The mutable game then layers **sparse override records** on top (a station built,
+prices drifted, a planet captured). See the
+[persistence model](../0-Projects/starwonder-mvp/technical-infrastructure.md#8-data-model-first-cut)
+and [generation pipeline](../0-Projects/starwonder-mvp/technical-infrastructure.md#11-universe-generation--persistence)
+in the technical doc. New seasons = a new seed.
+
+**Interactive reference:** the admin/debug map mockup
+[`map-admin.html`](../0-Projects/starwonder-mvp/mockups/map-admin.html) implements all of the
+above live — pinwheel layout, hash lanes, the `p` / star / wormhole knobs, the Sol-reachability
+readout and a seed finder. Current tuned defaults: **star likelihood 0.50, lane open prob.
+0.55, ~50 wormholes.**
 
 ## Why this is also great UX on a phone
 

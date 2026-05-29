@@ -94,8 +94,8 @@ always-on box at all). Details and cost in §9.
                                       ▼
         ┌──────────────────────────────────────────────────────┐
         │                    Supabase Postgres                   │  ◄── single
-        │   players · stars · lanes · wormholes · ports ·        │     source of
-        │   ships · planets · npcs · events · invites            │     truth
+        │  universes(seed+settings) · players · ships · npcs ·   │     source of
+        │  sector overrides · ports · planets · events · invites │     truth
         └───────┬───────────────────────┬───────────────┬───────┘
                 │ realtime               │ SQL           │ SQL + LISTEN
                 ▼ (push)                 ▼               ▼
@@ -121,7 +121,7 @@ the `events` table) narrates it to the channel.
 
 1. Authenticates the player (Supabase JWT).
 2. Loads relevant state.
-3. **Validates** the intent (adjacent star? enough Energy? port has stock?).
+3. **Validates** the intent (cardinal neighbour & lane open? enough Energy? port has stock?).
 4. Applies the change in a **transaction** (debit Energy, move ship, adjust prices).
 5. Writes an `events` row for anything noteworthy (feeds realtime + IRC).
 
@@ -131,11 +131,12 @@ store `energy` + `energy_updated_at`; on each action, `regen = min(cap, energy +
 ### Sketch: a move action
 
 ```
-POST /api/move  { toStarId }
+POST /api/move  { toSectorId }
   → auth player
   → regen energy from timestamps
-  → assert lane(from, toStarId) exists  AND  energy >= cost(lane)
-  → tx: energy -= cost; ship.star = toStarId; energy_updated_at = now
+  → assert toSector is a cardinal neighbour  AND  laneOpen(seed, from, toSector)
+        AND  energy >= cost                          (laneOpen computed, not queried)
+  → tx: energy -= cost; ship.sector = toSector; energy_updated_at = now
   → resolve arrival (minefield? NPC? toll?) and write events
   → return new state  (Supabase realtime also pushes it)
 ```
@@ -202,33 +203,55 @@ code is nearly identical; only the connection lifecycle differs.
 
 Postgres tables (Supabase). Names indicative; tune as you build.
 
+### Galaxy = seed + settings + sparse overrides (key decision)
+
+The galaxy is **not materialised** row-by-row. A universe is a **seed plus generation
+settings**; every sector's *baseline* (coords, region, star overlay, lane open/blocked,
+wormhole endpoints, initial station/planet class, initial NPC seeds) is a **pure function of
+`(seed, settings, sector_id)`** computed in `game-core` on demand (§11). The DB stores only:
+
+1. the **universe config**, and
+2. **sparse override records** for the few sectors/entities that have *diverged* from their
+   algorithmic baseline (a station built, prices drifted, a planet captured, a mine dropped).
+
+So a brand-new galaxy is ~one row, and the DB grows only where players actually change things
+— no 1024-row star table, no edge tables, nothing to keep in sync with the generator.
+
 ```
+universes      (id PK, seed text, settings_jsonb, active bool, created_by, created_at)
+                 -- settings_jsonb = the admin's slider values (§11):
+                 --   { starProb, laneP, wormholeCount, planetProbs, npcDensity, ... }
 invites        (code PK, created_by, used_by, used_at, expires_at)
 players        (id PK, auth_uid, handle, credits, energy, energy_updated_at,
                 energy_cap, energy_rate, ship_id, corp_id, created_at, last_seen)
-ships          (id PK, owner_player_id, class, star_id, hull, shields,
+ships          (id PK, owner_player_id, class, sector_id, hull, shields,
                 fighters, cargo_holds, cargo_jsonb, warp_level)
-stars          (id PK, hilbert_index, grid_x, grid_y, region, sector,
-                type, name)
-lanes          (a_star_id, b_star_id)              -- local edges, undirected
-wormholes      (id PK, a_star_id, b_star_id, oneway bool, stable bool)
-ports          (id PK, star_id, class, fuel_buy/sell, org_buy/sell, equ_buy/sell,
-                stock_jsonb, price_jsonb)
-planets        (id PK, star_id, class, owner_player_id, owner_corp_id,
-                production_jsonb, defenses_jsonb, citadel_level)
-deployables    (id PK, star_id, owner_player_id, kind {fighter|mine}, qty)
-npcs           (id PK, kind {trader|pirate}, ship_jsonb, star_id, route_jsonb, ai_state)
+sector_state   (universe_id, sector_id, patch_jsonb, updated_at)   -- THE override layer:
+                 -- only rows for sectors that diverged from baseline; patch_jsonb holds the
+                 -- deltas (station built/destroyed, owner, name override, ...)
+ports          (universe_id, sector_id, stock_jsonb, price_jsonb, updated_at)
+                 -- created lazily on first trade; class/baseline is derived, not stored
+planets        (universe_id, sector_id, owner_player_id, owner_corp_id,
+                production_jsonb, defenses_jsonb, citadel_level)   -- created on first claim
+deployables    (id PK, universe_id, sector_id, owner_player_id, kind {fighter|mine}, qty)
+npcs           (id PK, universe_id, kind {trader|pirate}, ship_jsonb, sector_id,
+                route_jsonb, ai_state)        -- materialised: NPCs move every tick
 corps          (id PK, name, founder_player_id)
-events         (id PK, ts, kind, actor, target, star_id, payload_jsonb,
+events         (id PK, ts, kind, actor, target, sector_id, payload_jsonb,
                 irc_announced bool, severity)     -- THE backbone of realtime + IRC
 ```
 
+- **Derived, never stored:** sector coords/region, star presence, **lanes** (hash of
+  `seed·min-max`), **wormholes** (seeded), initial station/planet/NPC layout. A "read sector"
+  = compute baseline from `(seed, settings)`, then apply its `sector_state` / `ports` /
+  `planets` override rows if any exist.
 - **`events` is central:** every interesting state change writes one. Clients subscribe for
   live feed; the IRC bot subscribes to announce; it's also your audit log / debugging trail.
-- **Row-Level Security (RLS):** Supabase RLS so the client can only read what a player
-  should see (their ships, public star/port info, events involving them). Functions use a
-  service role for authoritative writes.
-- Index `stars(hilbert_index)`, `lanes(a_star_id)`, `ships(star_id)`, `events(ts)`.
+- **Row-Level Security (RLS):** Supabase RLS so the client can only read what a player should
+  see (their ships, public sector/port info, events involving them). Functions use a service
+  role for authoritative writes.
+- Index `sector_state(universe_id, sector_id)`, `ships(sector_id)`, `npcs(sector_id)`,
+  `events(ts)`. (No star/lane tables to index — they don't exist.)
 
 ---
 
@@ -287,30 +310,47 @@ that player's announces. My honest take:
 - For **routine** announces, a **single game bot** is simpler and less noisy than puppeting
   N user connections (which also scales as a connection-per-online-player).
 - The flavorful middle ground: single bot for the channel feed, but it can address/`NOTICE`
-  *you* personally for your own events ("⚔ your fighters at R7·S3 were attacked").
+  *you* personally for your own events ("⚔ your fighters at Sector #412 were attacked").
 - Per-user presence is genuinely cool for an **embedded-chat / "the game is the channel"**
   feature (esp. with Nefarious2 WebSockets), but that's a Phase-3 indulgence, not MVP.
 
 ---
 
-## 11. Map generation pipeline
+## 11. Universe generation & persistence
 
-A one-off (re-runnable) **seeded** script, run offline, that writes the galaxy into Postgres:
+**The galaxy is computed, not stored** (§8). Generation lives in `game-core` as pure
+functions of `(seed, settings, sector_id)`:
 
-1. Seed a PRNG (store the seed with the galaxy).
-2. Generate the **order-5 Hilbert curve** → 1024 `(x,y)` cells in curve order.
-3. Pick ~1000 cells → `stars` (with region/sector from the nested blocks).
-4. Add **lanes**: curve-adjacent + grid-adjacent star pairs.
-5. Add **wormholes**: ~30–50 long-distance edges (distance-weighted, cross-region).
-6. Assign **star types**, then place **ports / planets / starbases** by type with a
-   guaranteed safe **home Haven**.
-7. Seed initial **NPCs** and port stock/prices.
-8. **Verify**: graph is fully connected; corner-to-corner hop count is reasonable *with*
-   wormholes; safe zone exists.
+1. **Pinwheel layout** → four order-4 Hilbert curves meeting at the centre, so **Sol = Sector
+   #0** is dead-centre; gives each sector its `(x,y)`, region (1–16), and arm.
+2. **Star overlay** — a per-sector probability roll (`starProb`); empty sectors remain
+   travellable deep-space waypoints.
+3. **Lanes** — for each cardinal-neighbour pair, open iff `hash(seed·min-max) / MAX < laneP`
+   (stateless, bidirectional — no stored edges).
+4. **Wormholes** — ~`wormholeCount` seeded long-range, distance-biased edges.
+5. **Stations / planets / NPC spawns** — placed by sector/star type from the seed
+   (probabilities are admin settings), with a guaranteed safe **home Haven at/near Sol**.
+6. **Acceptance check** — **reject the seed unless ≥ 90% of sectors are reachable from Sol**
+   (BFS over open lanes + wormholes). Some unreachable frontier pockets are fine and intended;
+   the bulk must be reachable from home.
 
-Persist everything; the live game **reads** the map, never regenerates it. Keep the script
-in the repo so you can spin up fresh "seasons" from new seeds. Full rationale:
-[Fractal Galaxy Map](../../2-Resources/fractal-galaxy-map.md).
+### The admin "universe builder"
+
+Admins create a universe through a screen like the [`map-admin.html`](mockups/map-admin.html)
+mockup — a live map plus **tabbed settings** (galaxy/lanes today; planet probabilities, NPC
+density, economy, factions as features land). The admin tunes sliders, watches the
+connectivity / Sol-reachability readout, picks a seed that passes the ≥90% check (there's a
+seed-finder), and **saves `{seed, settings}` as the active `universes` row.** That single row
+*is* the generated galaxy — no batch write.
+
+### Live state = baseline + overrides
+
+Reading a sector = **compute its baseline** from `(seed, settings)`, then **apply any override
+rows** (`sector_state` / `ports` / `planets` / `deployables`) on top. The first time something
+changes a sector, a Function writes its override row; untouched sectors never get one. New
+**seasons** = a new `universes` row with a fresh seed (its overrides retire with it). Keep all
+of this in `game-core` so Functions, the tick, the bot, and the admin mockup agree
+bit-for-bit. Full map/travel rationale: [Fractal Galaxy Map](../../2-Resources/fractal-galaxy-map.md).
 
 ---
 

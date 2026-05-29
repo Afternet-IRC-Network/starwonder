@@ -34,10 +34,13 @@ permadeath, no required real-time coordination, no fire-and-forget autopilot.
 The map is the star of the show. Full generation details live in
 [Fractal Galaxy Map](../../2-Resources/fractal-galaxy-map.md); the gameplay-facing summary:
 
-- **~1000 stars** placed on an order-5 Hilbert curve (32×32 grid). Neighbors are truly
-  adjacent; regions are tidy nested squares.
-- **Hierarchy:** Galaxy → ~16 **Regions** (~64 stars) → ~256 **Sectors** (~4 stars) →
-  **Star**. Addresses read like `R7·S3·#412`.
+- **1024 sectors** on an order-5 Hilbert curve (32×32 grid), laid out as a centred-Sol
+  **pinwheel** (Sol = Sector #0 at the centre). Neighbours are truly adjacent; regions are
+  tidy nested squares. Every sector is travellable; a **star** is a per-sector overlay
+  (~half of sectors, tunable), the rest deep-space waypoints.
+- **Hierarchy & address:** Galaxy → 16 **Regions** (64 sectors each) → **Sector** (one cell,
+  maybe a star). Addresses read `Region 7 · Sector #412`. Adjacent sectors are joined by
+  probabilistic **lanes**; full model in [Fractal Galaxy Map](../../2-Resources/fractal-galaxy-map.md).
 - **Lanes:** stars connect to local neighbors only — most travel is short hops.
 - **Wormholes:** ~30–50 long-range shortcuts overlaid on top. They're how you cross the
   galaxy quickly, so their mouths are strategically precious.
@@ -268,7 +271,7 @@ The IRC bot makes the asynchronous game feel social and alive. It should:
 - **Answer queries** via commands: `!status <player>`, `!leaderboard`, `!map <region>`,
   `!bounties`, `!whereis <player>` (privacy-gated, slightly fuzzed for flavor/intel).
 - **Daily "Galactic News" digest:** "Overnight: 3 stations raided, pirates massing in R12,
-  @alice captured the outpost at R7·S3·#412."
+  @alice captured the outpost at R7 · Sector #412."
 - Tunable verbosity so the channel doesn't get spammy. Technical design in the
   [infrastructure doc](technical-infrastructure.md#irc-bot).
 

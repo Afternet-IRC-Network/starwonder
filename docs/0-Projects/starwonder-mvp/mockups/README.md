@@ -11,6 +11,8 @@ d-modern-voxel.html        ← ✅ CANONICAL STAR-VIEW REFERENCE
 station-lab.html           station-icon shape exploration (V1–V6)
 station-lab-2.html         station-icon knob sweep — zoomed crop + hub
 station-lab-3.html         station-icon knob sweep — full wheel (chosen W3)
+map-admin.html             admin/debug universe builder — pinwheel galaxy, hash lanes,
+                           star/lane/wormhole knobs, Sol-reachability + seed finder
 ```
 
 Live (GitHub Pages), e.g. the canonical one:
@@ -78,8 +80,9 @@ generated from the seed → 1000 unique-but-stable bodies & a sprite per ship fo
   art is deterministic per sector/entity.
 
 ## Still to decide / do next
-1. **The dark/explored Map screen** — fog-of-war: unexplored = near-black, explored = lit,
-   wormhole links drawn. The showpiece; next mockup, in the D style. ← **next up**
+1. **The player-facing Map screen** — fog-of-war: unexplored = near-black, explored = lit,
+   wormhole links drawn, in the D style. The *admin* universe map is built
+   (`map-admin.html`); this is the limited, explored-only **player** view. ← **next up**
 2. **Planet-type palettes** — current set ocean/lava/ice/arid; expand and tie to the star's
    seed so each sector's world is deterministic.
 3. **Voxel fidelity** — flat-shaded pixel look is the baseline; revisit true isometric
