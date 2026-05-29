@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StarWonder — Map Admin / Universe-Physics Debug</title>
+<style>
+  :root{
+    --bg:#0a0f1a; --panel:#111827; --panel2:#0d1422; --line:#1f2a3d;
+    --fg:#cdd9ee; --muted:#5d6b85; --accent:#5ad1c9; --accent2:#8a7bff;
+    --gold:#e8b54a; --bad:#ff6b81; --good:#5ad17a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#05080f;color:var(--fg);
+    font-family:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;font-size:13px;}
+  .mono{font-family:"DejaVu Sans Mono",Menlo,Consolas,monospace;}
+  .wrap{display:flex;gap:18px;padding:18px;align-items:flex-start;flex-wrap:wrap;}
+  h1{font-size:15px;font-weight:700;letter-spacing:.5px;margin:0 0 2px;}
+  .sub{font-size:11px;color:var(--muted);margin-bottom:12px;max-width:720px;line-height:1.5;}
+  .canvas-card{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:12px;}
+  canvas#map{display:block;border-radius:8px;cursor:crosshair;background:#070b14;}
+  .side{width:300px;display:flex;flex-direction:column;gap:14px;}
+  .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;}
+  .box h2{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin:0 0 12px;}
+  .ctl{margin:11px 0;}
+  .ctl label{display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px;}
+  .ctl label .v{color:var(--accent);font-weight:700;}
+  input[type=range]{width:100%;accent-color:var(--accent);}
+  input[type=text]{width:100%;background:#0c1424;border:1px solid var(--line);border-radius:7px;
+    color:var(--fg);padding:7px 9px;font-family:inherit;}
+  .chk{display:flex;align-items:center;gap:8px;font-size:12px;margin:9px 0;cursor:pointer;}
+  .chk input{accent-color:var(--accent);width:15px;height:15px;}
+  .stat{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #16202f;font-size:12px;}
+  .stat:last-child{border-bottom:none;}
+  .stat .k{color:var(--muted);} .stat .val{font-weight:700;} .stat .val.mono{font-family:"DejaVu Sans Mono",monospace;}
+  .good{color:var(--good);} .warn{color:var(--gold);} .bad{color:var(--bad);}
+  .legend{display:flex;flex-wrap:wrap;gap:10px 14px;font-size:11px;color:var(--muted);margin-top:10px;}
+  .legend span{display:flex;align-items:center;gap:5px;}
+  .sw{width:16px;height:3px;border-radius:2px;display:inline-block;}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
+  .sel{font-size:12px;line-height:1.7;}
+  .sel .a{color:var(--accent);font-weight:700;}
+  button{background:#0c1424;border:1px solid var(--line);color:var(--fg);border-radius:8px;
+    padding:8px 10px;font-family:inherit;font-size:12px;cursor:pointer;}
+  button:hover{border-color:var(--accent);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div>
+    <h1>StarWonder · Universe-Physics Debug</h1>
+    <div class="sub">
+      Order-5 Hilbert galaxy (32×32). Lanes connect a star to its <b>cardinal grid neighbours</b>
+      (N/E/S/W) — adjacent in space even when far apart in <span class="mono">#</span> index. Each
+      potential lane is opened deterministically from <span class="mono">hash(seed · "loᵈ-hiᵈ")</span>
+      vs the open-probability <span class="mono">p</span> — canonical ordering ⇒ bidirectional &amp;
+      stateless. Drag <span class="mono">p</span> to watch the galaxy fragment. Click a star to flood
+      its reachable region.
+    </div>
+    <div class="canvas-card">
+      <canvas id="map" width="720" height="720"></canvas>
+      <div class="legend">
+        <span><i class="dot" style="background:#cdd9ee"></i> star</span>
+        <span><i class="dot" style="background:#26344d"></i> empty cell</span>
+        <span><i class="sw" style="background:#3f7e78"></i> open lane</span>
+        <span><i class="sw" style="background:#3a2230"></i> blocked lane</span>
+        <span><i class="sw" style="background:var(--gold)"></i> wormhole</span>
+        <span><i class="dot" style="background:var(--bad)"></i> isolated</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="side">
+    <div class="box">
+      <h2>Generation</h2>
+      <div class="ctl">
+        <label>Seed</label>
+        <input id="seed" type="text" value="starwonder" class="mono">
+      </div>
+      <div class="ctl">
+        <label>Empty cells <span class="v" id="emptyV">24</span></label>
+        <input id="empty" type="range" min="0" max="120" value="24">
+      </div>
+      <div class="ctl">
+        <label>Lane open prob. <span class="v" id="pV">0.78</span></label>
+        <input id="p" type="range" min="0" max="100" value="78">
+      </div>
+      <div class="ctl">
+        <label>Wormholes <span class="v" id="whV">40</span></label>
+        <input id="wh" type="range" min="0" max="80" value="40">
+      </div>
+      <label class="chk"><input type="checkbox" id="whOn" checked> show wormholes</label>
+      <label class="chk"><input type="checkbox" id="whConn" checked> wormholes count for reachability</label>
+      <label class="chk"><input type="checkbox" id="showBlocked" checked> show blocked lanes</label>
+      <label class="chk"><input type="checkbox" id="colorComp"> colour by component</label>
+      <label class="chk"><input type="checkbox" id="regionTint" checked> tint 16 regions</label>
+    </div>
+
+    <div class="box">
+      <h2>Connectivity</h2>
+      <div class="stat"><span class="k">Stars</span><span class="val" id="sStars">–</span></div>
+      <div class="stat"><span class="k">Open / potential lanes</span><span class="val mono" id="sLanes">–</span></div>
+      <div class="stat"><span class="k">Avg degree</span><span class="val mono" id="sDeg">–</span></div>
+      <div class="stat"><span class="k">Components</span><span class="val" id="sComp">–</span></div>
+      <div class="stat"><span class="k">Largest reachable</span><span class="val" id="sLarge">–</span></div>
+      <div class="stat"><span class="k">Stranded (outside largest)</span><span class="val" id="sStrand">–</span></div>
+      <div class="stat"><span class="k">Fully isolated</span><span class="val" id="sIso">–</span></div>
+    </div>
+
+    <div class="box">
+      <h2>Selection</h2>
+      <div class="sel" id="sel">Click a star…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- hashing ----------
+function fnv(s){let h=2166136261>>>0;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+
+// ---------- Hilbert curve (order 5, side 32) ----------
+const SIDE=32, N=SIDE*SIDE;
+function d2xy(n,d){let rx,ry,t=d,x=0,y=0;for(let s=1;s<n;s*=2){rx=1&(t/2);ry=1&(t^rx);
+  if(ry===0){if(rx===1){x=s-1-x;y=s-1-y;}const tmp=x;x=y;y=tmp;}x+=s*rx;y+=s*ry;t=Math.floor(t/4);}return[x,y];}
+const XY=new Array(N);            // d -> {x,y}
+const D=new Int32Array(N);        // y*SIDE+x -> d
+for(let d=0;d<N;d++){const[x,y]=d2xy(SIDE,d);XY[d]={x,y};D[y*SIDE+x]=d;}
+
+// ---------- canvas geometry ----------
+const cv=document.getElementById('map'), ctx=cv.getContext('2d');
+const LOGICAL=720, MARGIN=22, CELL=(LOGICAL-2*MARGIN)/SIDE;
+(function hidpi(){const dpr=window.devicePixelRatio||1;cv.width=LOGICAL*dpr;cv.height=LOGICAL*dpr;
+  cv.style.width=LOGICAL+'px';cv.style.height=LOGICAL+'px';ctx.scale(dpr,dpr);})();
+const sx=x=>MARGIN+(x+0.5)*CELL, sy=y=>MARGIN+(y+0.5)*CELL;
+
+// ---------- controls ----------
+const el=id=>document.getElementById(id);
+const C={seed:el('seed'),empty:el('empty'),p:el('p'),wh:el('wh'),whOn:el('whOn'),whConn:el('whConn'),
+  showBlocked:el('showBlocked'),colorComp:el('colorComp'),regionTint:el('regionTint')};
+
+// ---------- model ----------
+let M={};
+function build(){
+  const seed=C.seed.value, emptyN=+C.empty.value, p=+C.p.value/100, whN=+C.wh.value;
+
+  // star placement: rank cells by hash, blank the lowest `emptyN`
+  const order=[...Array(N).keys()].sort((a,b)=>fnv(seed+'|cell|'+a)-fnv(seed+'|cell|'+b));
+  const isStar=new Uint8Array(N).fill(1);
+  for(let i=0;i<emptyN;i++) isStar[order[i]]=0;
+  const stars=[]; for(let d=0;d<N;d++) if(isStar[d]) stars.push(d);
+
+  // potential cardinal lanes (enumerate +x and +y to hit each undirected pair once)
+  const laneOpen=(a,b)=>{const lo=Math.min(a,b),hi=Math.max(a,b);
+    return (fnv(seed+'|lane|'+lo+'-'+hi)%100000)/100000 < p;};
+  const lanes=[]; let openCount=0;
+  for(const d of stars){const{x,y}=XY[d];
+    for(const[nx,ny] of [[x+1,y],[x,y+1]]){
+      if(nx>=SIDE||ny>=SIDE) continue;
+      const nd=D[ny*SIDE+nx]; if(!isStar[nd]) continue;
+      const open=laneOpen(d,nd); if(open) openCount++;
+      lanes.push({a:d,b:nd,open});
+    }
+  }
+
+  // wormholes: deterministic long-range edges, biased to distance
+  const wprng=mulberry32(fnv(seed+'|wormholes'));
+  const whSet=new Set(), wormholes=[];
+  const minDist=SIDE*0.45;
+  let guard=0;
+  while(wormholes.length<whN && guard++<whN*60){
+    const a=stars[(wprng()*stars.length)|0], b=stars[(wprng()*stars.length)|0];
+    if(a===b) continue;
+    const A=XY[a],B=XY[b];
+    if(Math.hypot(A.x-B.x,A.y-B.y)<minDist) continue;
+    const key=Math.min(a,b)+'-'+Math.max(a,b);
+    if(whSet.has(key)) continue;
+    whSet.add(key); wormholes.push({a,b});
+  }
+
+  // union-find over open lanes (+ wormholes if enabled)
+  const parent=new Int32Array(N); for(let i=0;i<N;i++) parent[i]=i;
+  const find=x=>{while(parent[x]!==x){parent[x]=parent[parent[x]];x=parent[x];}return x;};
+  const uni=(a,b)=>{parent[find(a)]=find(b);};
+  for(const l of lanes) if(l.open) uni(l.a,l.b);
+  if(C.whConn.checked) for(const w of wormholes) uni(w.a,w.b);
+
+  // component sizes & degree
+  const size={}; for(const d of stars){const r=find(d);size[r]=(size[r]||0)+1;}
+  const comps=Object.entries(size).map(([r,n])=>({root:+r,n})).sort((a,b)=>b.n-a.n);
+  const deg=new Int16Array(N);
+  for(const l of lanes) if(l.open){deg[l.a]++;deg[l.b]++;}
+  if(C.whConn.checked) for(const w of wormholes){deg[w.a]++;deg[w.b]++;}
+  const iso=stars.filter(d=>deg[d]===0).length;
+
+  // component colour map
+  const compColor={}; const hues=[];
+  comps.forEach((c,i)=>{const h=(i*67)%360; compColor[c.root]=`hsl(${h} 60% 60%)`;});
+
+  M={seed,p,emptyN,whN,isStar,stars,lanes,openCount,wormholes,find,size,comps,deg,iso,compColor};
+  paintStats();
+  draw();
+}
+
+function paintStats(){
+  const s=M, total=s.stars.length, largest=s.comps[0]?s.comps[0].n:0;
+  el('sStars').textContent=total;
+  el('sLanes').textContent=s.openCount+' / '+s.lanes.length;
+  el('sDeg').textContent=(s.openCount*2/Math.max(1,total)).toFixed(2);
+  const compEl=el('sComp'); compEl.textContent=s.comps.length;
+  compEl.className='val '+(s.comps.length<=3?'good':s.comps.length<=10?'warn':'bad');
+  const pct=(100*largest/Math.max(1,total));
+  const le=el('sLarge'); le.textContent=largest+' ('+pct.toFixed(1)+'%)';
+  le.className='val '+(pct>=92?'good':pct>=75?'warn':'bad');
+  el('sStrand').textContent=(total-largest);
+  const ie=el('sIso'); ie.textContent=s.iso; ie.className='val '+(s.iso===0?'good':s.iso<10?'warn':'bad');
+}
+
+// ---------- drawing ----------
+let selected=null;
+function draw(){
+  ctx.clearRect(0,0,LOGICAL,LOGICAL);
+  const s=M;
+  const selRoot = selected!=null ? s.find(selected) : null;
+
+  // region tint (16 nested 8×8 squares = d>>6)
+  if(C.regionTint.checked){
+    for(let d=0;d<N;d++){const{x,y}=XY[d];const reg=d>>6;
+      ctx.fillStyle=`hsla(${reg*(360/16)} 50% 50% / 0.05)`;
+      ctx.fillRect(MARGIN+x*CELL,MARGIN+y*CELL,CELL,CELL);}
+  }
+
+  // blocked lanes (under)
+  if(C.showBlocked.checked){
+    ctx.strokeStyle='#3a2230'; ctx.lineWidth=1; ctx.setLineDash([2,3]);
+    ctx.beginPath();
+    for(const l of s.lanes) if(!l.open){
+      const A=XY[l.a],B=XY[l.b]; ctx.moveTo(sx(A.x),sy(A.y)); ctx.lineTo(sx(B.x),sy(B.y));
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  // open lanes
+  ctx.lineWidth=1.4;
+  for(const l of s.lanes) if(l.open){
+    const A=XY[l.a],B=XY[l.b];
+    if(selRoot!=null){
+      const inSel=s.find(l.a)===selRoot;
+      ctx.strokeStyle=inSel?'#5ad1c9':'#22323f';
+    } else if(C.colorComp.checked){
+      ctx.strokeStyle=s.compColor[s.find(l.a)]||'#3f7e78';
+    } else ctx.strokeStyle='#3f7e78';
+    ctx.beginPath(); ctx.moveTo(sx(A.x),sy(A.y)); ctx.lineTo(sx(B.x),sy(B.y)); ctx.stroke();
+  }
+
+  // wormholes (bowed gold arcs, over lanes)
+  if(C.whOn.checked){
+    ctx.lineWidth=1.4;
+    for(const w of s.wormholes){
+      const A=XY[w.a],B=XY[w.b],x1=sx(A.x),y1=sy(A.y),x2=sx(B.x),y2=sy(B.y);
+      const mx=(x1+x2)/2, my=(y1+y2)/2, dx=x2-x1, dy=y2-y1;
+      const cxp=mx-dy*0.12, cyp=my+dx*0.12;
+      const hot = selRoot!=null && (s.find(w.a)===selRoot||s.find(w.b)===selRoot) && C.whConn.checked;
+      ctx.strokeStyle = hot ? 'rgba(232,181,74,.95)' : 'rgba(232,181,74,.40)';
+      ctx.beginPath(); ctx.moveTo(x1,y1); ctx.quadraticCurveTo(cxp,cyp,x2,y2); ctx.stroke();
+    }
+  }
+
+  // stars
+  for(const d of s.stars){
+    const{x,y}=XY[d]; const cx=sx(x),cy=sy(y);
+    let col='#cdd9ee', r=2.6;
+    if(s.deg[d]===0){col='#ff6b81';r=2.8;}
+    else if(selRoot!=null){ col = s.find(d)===selRoot ? '#eafff9' : '#33425a'; r = s.find(d)===selRoot?3.2:2.2; }
+    else if(C.colorComp.checked){ col=s.compColor[s.find(d)]||'#cdd9ee'; }
+    ctx.fillStyle=col; ctx.beginPath(); ctx.arc(cx,cy,r,0,7); ctx.fill();
+  }
+
+  // empty cells (faint)
+  ctx.fillStyle='#26344d';
+  for(let d=0;d<N;d++) if(!s.isStar[d]){const{x,y}=XY[d];ctx.beginPath();ctx.arc(sx(x),sy(y),1.3,0,7);ctx.fill();}
+
+  // selected ring
+  if(selected!=null){const{x,y}=XY[selected];ctx.strokeStyle='#fff';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.arc(sx(x),sy(y),5.5,0,7);ctx.stroke();}
+}
+
+// ---------- interaction ----------
+function addr(d){return 'R'+(d>>6)+' · S'+(d>>2)+' · #'+d;}
+cv.addEventListener('click',e=>{
+  const rect=cv.getBoundingClientRect();
+  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  let best=null,bd=1e9;
+  for(const d of M.stars){const{x,y}=XY[d];const dist=Math.hypot(sx(x)-mx,sy(y)-my);if(dist<bd){bd=dist;best=d;}}
+  if(bd>CELL){selected=null;el('sel').textContent='Click a star…';draw();return;}
+  selected=best;
+  const root=M.find(best), reach=M.size[root]||1;
+  const{x,y}=XY[best];
+  const whHere=M.wormholes.filter(w=>w.a===best||w.b===best)
+    .map(w=>{const o=w.a===best?w.b:w.a;return '#'+o+' ('+addr(o).split(' · ').slice(0,2).join('·')+')';});
+  el('sel').innerHTML=
+    '<div class="a mono">'+addr(best)+'</div>'+
+    'grid ('+x+','+y+')<br>'+
+    'open lanes: '+M.deg[best]+'<br>'+
+    'reachable from here: <b>'+reach+'</b> stars '+
+    '('+(100*reach/M.stars.length).toFixed(1)+'% of galaxy)<br>'+
+    (whHere.length?'wormholes: <span class="mono" style="color:var(--gold)">'+whHere.join(', ')+'</span>':'no wormhole here');
+  draw();
+});
+
+// ---------- wire controls ----------
+const sync=()=>{el('emptyV').textContent=C.empty.value;el('pV').textContent=(C.p.value/100).toFixed(2);
+  el('whV').textContent=C.wh.value;};
+for(const k in C){const node=C[k];const ev=(node.type==='range'||node.type==='text')?'input':'change';
+  node.addEventListener(ev,()=>{sync();
+    // generation-affecting controls rebuild; pure view toggles just redraw
+    if(['showBlocked','colorComp','regionTint','whOn'].includes(k) && node.type!=='range') draw();
+    else build();
+  });}
+sync(); build();
+</script>
+</body>
+</html>
