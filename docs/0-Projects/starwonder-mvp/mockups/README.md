@@ -4,15 +4,23 @@ Takes on the **home screen** (the "Star view"), all showing the same content so 
 comparing *style*, not layout. Self-contained HTML — just open in a browser:
 
 ```
-docs/0-Projects/starwonder-mvp/mockups/a-phosphor-terminal.html
-docs/0-Projects/starwonder-mvp/mockups/b-modern-ascii.html
-docs/0-Projects/starwonder-mvp/mockups/c-pixel-voxel.html
-docs/0-Projects/starwonder-mvp/mockups/d-modern-voxel.html   ← ✅ CHOSEN DIRECTION
+a-phosphor-terminal.html   exploration: pure ASCII terminal
+b-modern-ascii.html        exploration: modern chrome + coloured ASCII
+c-pixel-voxel.html         exploration: pixel/voxel art
+d-modern-voxel.html        ← ✅ CANONICAL STAR-VIEW REFERENCE
+station-lab.html           station-icon shape exploration (V1–V6)
+station-lab-2.html         station-icon knob sweep — zoomed crop + hub
+station-lab-3.html         station-icon knob sweep — full wheel (chosen W3)
 ```
+
+Live (GitHub Pages), e.g. the canonical one:
+`https://afternet-irc-network.github.io/starwonder/docs/0-Projects/starwonder-mvp/mockups/d-modern-voxel.html`
+(append a `?v=N` cache-buster when re-viewing after an update.)
 
 > **Decision:** go with **D** — the modern app chrome of **B** + the procedural
 > pixel/voxel art of **C** for planets, ships, and stations. A/B/C are kept below as the
-> exploration that led there.
+> exploration that led there. **`d-modern-voxel.html` is the source of truth for the
+> Star-view look.**
 
 (Resize the window narrow, or open dev-tools device mode, to see the phone framing.)
 
@@ -46,27 +54,38 @@ Canvas-rendered **pixel-art** planet (low-res sphere + palette ramp + dithering)
 - **Cons:** furthest from the ASCII brief; pixel art is easy to do badly; more art direction
   needed to stay coherent across 1000 procedurally-generated bodies.
 
-## D — Modern chrome + Voxel art  ← ✅ chosen
-B's app chrome with **canvas-rendered pixel/voxel** art instead of ASCII:
+## D — Modern chrome + Voxel art  ← ✅ chosen (current direction)
+B's app chrome with **canvas-rendered pixel/voxel** art instead of ASCII. Everything is
+generated from the seed → 1000 unique-but-stable bodies & a sprite per ship for free.
+
+**Locked-in Star-view composition (as built in `d-modern-voxel.html`):**
+- **Layout:** header (system name + `R·S·#` address + Energy bar) · orbit *viewport* ·
+  "In orbit" / "Also here" cards · horizontally-scrolling warp lanes · action buttons
+  (Dock / Scan / Move) · bottom nav (Star / Map / Dock / Ship / Log).
 - **Planet:** low-res sphere, seeded terrain bands, palette-by-type (ocean/lava/ice/arid),
-  2×2 Bayer dithering, fixed-light shading — and it **slowly rotates** (terrain spins in
-  longitude while the light stays put, so the terminator behaves correctly).
+  2×2 Bayer dithering, fixed-light shading. **Rendered static** (no spin) — the rotation
+  was too busy.
+- **Station / Docks:** a procedural **2001-style wheel** — tilted elliptical ring + hub +
+  struts, depth-shaded, steely/metallic; the *universal dock icon*. Tuned to variant **W3**
+  (`tilt 0.58 · 4 struts · rim 0.16 · spoke 0.06 · hub 0.20`). It **slowly rotates** — the
+  one bit of motion in the viewport. Shown both as the 30px orbit-list icon and as a small
+  (~30px) station floating over the planet.
 - **Ships:** mirror-symmetric procedural pixel sprites, seeded per entity, hue by role
-  (red pirate, green friendly trader). One drifts across orbit.
-- **Stations/Docks:** a procedural **2001-style wheel** — tilted elliptical ring + central
-  hub + spokes, depth-shaded, steely/metallic. Used as the shared icon for all docks.
-- Everything is generated from the seed → 1000 unique-but-stable bodies & a sprite per ship
-  for free.
+  (red = pirate/hostile, green = friendly trader). The "Also here" ships are shown **parked
+  statically in front of the planet** (as if mid-orbit) — not animated.
+- **Colour = meaning:** buy = green, sell = gold, hostile = red, wormhole = gold.
+- All sprite/planet/station rendering uses one seeded PRNG (FNV-1a hash → mulberry32) so
+  art is deterministic per sector/entity.
 
 ## Still to decide / do next
-1. **Voxel fidelity** — keep this flat-shaded pixel look, or push toward true isometric
-   voxels (chunkier, more 3D) for hero objects like your own ship?
-2. **Color discipline** — color always *means* something (buy=green, sell=gold, hostile=red)
-   vs. decorative. (Leaning: always meaningful.)
-3. **Planet-type palettes** — current set is ocean/lava/ice/arid; expand + tie to the star's
-   seed so a sector's world is deterministic.
-4. **The dark/explored map** — fog-of-war: unexplored = near-black, explored = lit. The
-   showpiece screen; deserves its own mockup next, in the D style.
+1. **The dark/explored Map screen** — fog-of-war: unexplored = near-black, explored = lit,
+   wormhole links drawn. The showpiece; next mockup, in the D style. ← **next up**
+2. **Planet-type palettes** — current set ocean/lava/ice/arid; expand and tie to the star's
+   seed so each sector's world is deterministic.
+3. **Voxel fidelity** — flat-shaded pixel look is the baseline; revisit true isometric
+   voxels later for hero objects (your own ship) if wanted.
+4. **Ship occlusion** — orbit ships currently sit *over* the planet; real "behind the
+   planet" pass is deferred (the static placement sidesteps it for now).
 
 > ⚠️ **Original art only.** All glyphs/layouts here are ours; we deliberately avoid copying
 > any existing game's screens, names, or art. The procedural engine helps — our planets are
