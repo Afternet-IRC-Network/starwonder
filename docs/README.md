@@ -1,7 +1,8 @@
 # StarWonder Docs
 
-A web-based, slow-paced space trading & conquest game in the spirit of **TradeWars 2002**,
-built on an **xkcd #195 ("Map of the Internet")** style fractal galaxy map.
+A web-based, slow-paced space trading & conquest game in the spirit of the **classic '90s
+BBS space-traders**, built on an **xkcd #195 ("Map of the Internet")** style fractal galaxy
+map.
 
 This folder uses **PARA** organization:
 
@@ -21,7 +22,7 @@ This folder uses **PARA** organization:
 ## Reference
 
 - [The Fractal Galaxy Map (xkcd #195)](2-Resources/fractal-galaxy-map.md)
-- [TradeWars 2002 — mechanics worth stealing](2-Resources/tradewars-2002-reference.md)
+- [Classic space-trader genre — mechanics worth borrowing](2-Resources/space-trader-genre-reference.md)
 
 > **Status:** early spec / brainstorm. Decisions marked **(recommended)** are my default;
 > open questions are collected at the bottom of each doc.

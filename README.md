@@ -1,7 +1,8 @@
 # StarWonder
 
 A slow, ambient, **web-based space trading & conquest game** for a small circle of friends —
-TradeWars 2002's soul on an [xkcd #195](https://xkcd.com/195/)-style fractal galaxy map.
+the soul of the classic '90s BBS space-traders on an [xkcd #195](https://xkcd.com/195/)-style
+fractal galaxy map.
 
 - ~1000 stars on a Hilbert-curve galaxy, connected by local lanes + random wormholes.
 - Ambient "Energy" turn economy — play a few minutes between other things.

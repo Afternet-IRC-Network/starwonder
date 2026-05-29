@@ -17,7 +17,7 @@ Build order for getting something friends can actually play. Detail lives in the
       (Planets are flavor/scenery only — no landing.)
 - [ ] **Missions v1:** courier, procurement, bounty. Faction reputation (2 factions) →
       unlocks.
-- [ ] One ship/module-upgrade path at a StarDock; escape-pod + soft-loss (cargo drop,
+- [ ] One ship/module-upgrade path at a Haven; escape-pod + soft-loss (cargo drop,
       repair cost) on defeat.
 - [ ] NPC traders & pirates moving on the tick.
 - [ ] Basic PvE combat resolution.

@@ -1,7 +1,7 @@
 # StarWonder — Gameplay Overview
 
 > A slow, ambient, web-based space trading & conquest game for you and your friends.
-> TradeWars 2002's soul, an xkcd-#195 fractal galaxy as its body, and a turn economy
+> The soul of the classic '90s BBS space-traders, an xkcd-#195 fractal galaxy as its body, and a turn economy
 > designed to be checked between day-job AI prompts.
 
 ---
@@ -52,8 +52,8 @@ not the surface.
 A star has a **type** and may host one or more stations:
 
 - **Trade stations** — the economy: buy/sell commodities (see §5). Most common.
-- **StarDocks** — safe hubs: buy/repair/upgrade ships, store goods, take missions. At least
-  one **home StarDock** is a guaranteed safe zone.
+- **Havens** — safe hubs: buy/repair/upgrade ships, store goods, take missions. At least
+  one **home Haven** is a guaranteed safe zone.
 - **Shipyards / specialist stations** — sell modules, ships, blueprints; faction-gated.
 - **Outposts** — player- or corp-built stations (see §10) — the ownable power base.
 - Many stars are just **empty waypoints** (lanes/wormholes + maybe an NPC passing through),
@@ -116,7 +116,7 @@ mouths, run faction-rep chains, contest other corps.
 
 ## 5. Economy & trade (the money loop)
 
-Lifted from TradeWars and modernized (see [reference](../../2-Resources/tradewars-2002-reference.md)):
+Lifted from the classic space-trader genre and modernized (see [reference](../../2-Resources/space-trader-genre-reference.md)):
 
 - Three commodities: **Fuel Ore, Organics, Equipment**.
 - **Trade stations** each Buy some and Sell others (the 8 buy/sell combos = station
@@ -168,8 +168,8 @@ Missions pay **Credits + faction reputation**, sometimes **module/blueprint unlo
 - Ship stats: **cargo holds, shields, fighters carried, hull, warp ability** (can it use
   wormholes / how cheaply). (Fuel as a *second* resource is optional — Energy is probably
   enough for MVP.)
-- Buy/upgrade ships and **modules** at StarDocks/shipyards, gated partly by faction rep.
-- Losing a fight damages/destroys your ship, but you **escape-pod** back to a StarDock — a
+- Buy/upgrade ships and **modules** at Havens/shipyards, gated partly by faction rep.
+- Losing a fight damages/destroys your ship, but you **escape-pod** back to a Haven — a
   setback, not deletion (see §8).
 
 ---
@@ -183,16 +183,16 @@ goal). Built to work when players are rarely online together:
   baseline danger and a source of early income/risk.
 - **Async PvP via deployables:** drop **fighters** or **mines** in a star to toll, block, or
   damage anyone passing through. You attack a *position*, not a person who must be online —
-  the TradeWars insight that makes async combat work.
+  the classic-genre insight that makes async combat work.
 - **Direct PvP:** if two players share a star, they can engage; otherwise combat is mediated
   through deployed assets and defenses.
 - **Soft-loss rules (the safety net):**
-  - You **escape-pod** to the nearest StarDock with your life and a basic ship — never a
+  - You **escape-pod** to the nearest Haven with your life and a basic ship — never a
     deleted account.
   - You may **drop / lose cargo and fighters** (the spoils of the winner) and take **repair
     or replacement costs** — that's the sting.
-  - **Ship insurance** (buy at StarDocks) softens replacement cost further.
-  - **Safe zones:** StarDocks and a small core region are no-combat refuges for newbies and
+  - **Ship insurance** (buy at Havens) softens replacement cost further.
+  - **Safe zones:** Havens and a small core region are no-combat refuges for newbies and
     returning players.
 - Resolution is **deterministic-with-variance** on the server (shields vs fighters vs hull),
   narrated to the player and to IRC. No client-side combat.
@@ -252,7 +252,7 @@ Non-monetary, all earned:
 
 - **Invite-only.** New players need an invite (likely tied to an AfterNET account). Keeps it
   a friends' galaxy.
-- Gentle tutorial: spawn near a safe StarDock with a known nearby port pair and a starter
+- Gentle tutorial: spawn near a safe Haven with a known nearby port pair and a starter
   courier mission, so the first session is "do one delivery, make a profit, buy an upgrade."
 - **IRC is the shared narrative layer** (see §14).
 

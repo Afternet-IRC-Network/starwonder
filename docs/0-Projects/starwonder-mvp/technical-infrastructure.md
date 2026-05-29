@@ -303,7 +303,7 @@ A one-off (re-runnable) **seeded** script, run offline, that writes the galaxy i
 4. Add **lanes**: curve-adjacent + grid-adjacent star pairs.
 5. Add **wormholes**: ~30–50 long-distance edges (distance-weighted, cross-region).
 6. Assign **star types**, then place **ports / planets / starbases** by type with a
-   guaranteed safe **home StarDock**.
+   guaranteed safe **home Haven**.
 7. Seed initial **NPCs** and port stock/prices.
 8. **Verify**: graph is fully connected; corner-to-corner hop count is reasonable *with*
    wormholes; safe zone exists.
