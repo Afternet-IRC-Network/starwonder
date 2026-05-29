@@ -56,8 +56,9 @@
       neighbours</b> (N/E/S/W) — adjacent in space even when far apart in <span class="mono">#</span>
       index — opened deterministically from <span class="mono">hash(seed · "loᵈ-hiᵈ")</span> vs the
       open-probability <span class="mono">p</span> (canonical ordering ⇒ bidirectional &amp;
-      stateless). Drag <span class="mono">p</span> to watch the galaxy fragment. Click a sector to
-      flood its reachable region.
+      stateless). Sol (<span class="mono">#0</span>) sits dead-centre via the pinwheel layout and
+      players start there, so <b>Reachable from Sol</b> is the number that matters — aim ≥ 90% (use
+      🎲 to find a seed). Click any sector for its jump-distance from Sol (lanes + wormholes).
     </div>
     <div class="canvas-card">
       <canvas id="map" width="720" height="720"></canvas>
@@ -78,31 +79,32 @@
       <h2>Generation</h2>
       <div class="ctl">
         <label>Seed</label>
-        <input id="seed" type="text" value="starwonder" class="mono">
+        <input id="seed" type="text" value="aurora" class="mono">
+        <button id="findSeed" style="width:100%;margin-top:7px">🎲 find seed · Sol ≥ 90% reachable</button>
       </div>
       <div class="ctl">
-        <label>Star likelihood <span class="v" id="starV">0.80</span></label>
-        <input id="star" type="range" min="0" max="100" value="80">
+        <label>Star likelihood <span class="v" id="starV">0.50</span></label>
+        <input id="star" type="range" min="0" max="100" value="50">
       </div>
       <div class="ctl">
-        <label>Lane open prob. <span class="v" id="pV">0.78</span></label>
-        <input id="p" type="range" min="0" max="100" value="78">
+        <label>Lane open prob. <span class="v" id="pV">0.55</span></label>
+        <input id="p" type="range" min="0" max="100" value="55">
       </div>
       <div class="ctl">
-        <label>Wormholes <span class="v" id="whV">40</span></label>
-        <input id="wh" type="range" min="0" max="80" value="40">
+        <label>Wormholes <span class="v" id="whV">50</span></label>
+        <input id="wh" type="range" min="0" max="80" value="50">
       </div>
       <label class="chk"><input type="checkbox" id="whOn" checked> show wormholes</label>
       <label class="chk"><input type="checkbox" id="whConn" checked> wormholes count for reachability</label>
       <label class="chk"><input type="checkbox" id="showBlocked" checked> show blocked lanes</label>
       <label class="chk"><input type="checkbox" id="colorComp"> colour by component</label>
       <label class="chk"><input type="checkbox" id="regionTint" checked> tint 16 regions</label>
-      <label class="chk"><input type="checkbox" id="pinwheel" checked> Sol (#0) at centre · pinwheel</label>
     </div>
 
     <div class="box">
       <h2>Connectivity</h2>
       <div class="stat"><span class="k">Sectors / stars</span><span class="val" id="sStars">–</span></div>
+      <div class="stat"><span class="k">Reachable from Sol</span><span class="val" id="sSol">–</span></div>
       <div class="stat"><span class="k">Open / potential lanes</span><span class="val mono" id="sLanes">–</span></div>
       <div class="stat"><span class="k">Avg degree</span><span class="val mono" id="sDeg">–</span></div>
       <div class="stat"><span class="k">Components</span><span class="val" id="sComp">–</span></div>
@@ -113,7 +115,7 @@
 
     <div class="box">
       <h2>Selection</h2>
-      <div class="sel" id="sel">Click a star…</div>
+      <div class="sel" id="sel">Click a sector…</div>
     </div>
   </div>
 </div>
@@ -160,12 +162,12 @@ const sx=x=>MARGIN+(x+0.5)*CELL, sy=y=>MARGIN+(y+0.5)*CELL;
 // ---------- controls ----------
 const el=id=>document.getElementById(id);
 const C={seed:el('seed'),star:el('star'),p:el('p'),wh:el('wh'),whOn:el('whOn'),whConn:el('whConn'),
-  showBlocked:el('showBlocked'),colorComp:el('colorComp'),regionTint:el('regionTint'),pinwheel:el('pinwheel')};
+  showBlocked:el('showBlocked'),colorComp:el('colorComp'),regionTint:el('regionTint')};
 
 // ---------- model ----------
 let M={};
 function build(){
-  buildCurve(C.pinwheel.checked);
+  buildCurve(true);   // pinwheel is now the only layout: Sol (#0) dead-centre
   const seed=C.seed.value, starProb=+C.star.value/100, p=+C.p.value/100, whN=+C.wh.value;
 
   // every cell is a travellable SECTOR; a star is an overlay, present with prob starProb
@@ -217,11 +219,19 @@ function build(){
   if(C.whConn.checked) for(const w of wormholes){deg[w.a]++;deg[w.b]++;}
   let iso=0; for(let d=0;d<N;d++) if(deg[d]===0) iso++;
 
+  // adjacency + BFS jump-distance from Sol (#0); wormholes are edges when they count
+  const adj=Array.from({length:N},()=>[]);
+  for(const l of lanes) if(l.open){adj[l.a].push(l.b);adj[l.b].push(l.a);}
+  if(C.whConn.checked) for(const w of wormholes){adj[w.a].push(w.b);adj[w.b].push(w.a);}
+  const dist=new Int32Array(N).fill(-1); dist[0]=0;
+  const bq=[0]; let bh=0, solReach=1;
+  while(bh<bq.length){const u=bq[bh++];for(const v of adj[u]) if(dist[v]<0){dist[v]=dist[u]+1;solReach++;bq.push(v);}}
+
   // component colour map
   const compColor={};
   comps.forEach((c,i)=>{const h=(i*67)%360; compColor[c.root]=`hsl(${h} 60% 60%)`;});
 
-  M={seed,p,starProb,whN,hasStar,stars,lanes,openCount,wormholes,find,size,comps,deg,iso,compColor};
+  M={seed,p,starProb,whN,hasStar,stars,lanes,openCount,wormholes,find,size,comps,deg,iso,compColor,dist,solReach};
   paintStats();
   draw();
 }
@@ -229,6 +239,9 @@ function build(){
 function paintStats(){
   const s=M, nStars=s.stars.length, largest=s.comps[0]?s.comps[0].n:0;
   el('sStars').textContent=N+' / '+nStars;
+  const solPct=100*s.solReach/N;
+  const se=el('sSol'); se.textContent=s.solReach+' ('+solPct.toFixed(1)+'%)';
+  se.className='val '+(solPct>=90?'good':solPct>=75?'warn':'bad');
   el('sLanes').textContent=s.openCount+' / '+s.lanes.length;
   el('sDeg').textContent=(s.openCount*2/N).toFixed(2);
   const compEl=el('sComp'); compEl.textContent=s.comps.length;
@@ -316,7 +329,7 @@ function draw(){
 }
 
 // ---------- interaction ----------
-function addr(d){return 'R'+(d>>6)+' · S'+(d>>2)+' · #'+d;}
+function addr(d){return 'R'+(d>>6)+' · S'+((d>>2)&15)+' · #'+d;}   // S = sector within region (0-15)
 cv.addEventListener('click',e=>{
   const rect=cv.getBoundingClientRect();
   const mx=e.clientX-rect.left, my=e.clientY-rect.top;
@@ -328,16 +341,46 @@ cv.addEventListener('click',e=>{
   const{x,y}=XY[best];
   const whHere=M.wormholes.filter(w=>w.a===best||w.b===best)
     .map(w=>{const o=w.a===best?w.b:w.a;return '#'+o+' ('+addr(o).split(' · ').slice(0,2).join('·')+')';});
+  const solDist=M.dist[best];
+  const solLine = best===0
+    ? '<span class="good">★ this is Sol</span>'
+    : solDist>=0
+      ? '<span class="good">✓ reachable from Sol · <b>'+solDist+'</b> jump'+(solDist===1?'':'s')+'</span>'
+      : '<span class="bad">✗ unreachable from Sol</span>';
   el('sel').innerHTML=
     (best===0?'<div style="color:var(--gold);font-weight:700">★ SOL — home system</div>':'')+
     '<div class="a mono">'+addr(best)+'</div>'+
     (M.hasStar[best]?'<span class="good">★ has star</span>':'<span style="color:var(--muted)">empty sector · deep-space waypoint</span>')+'<br>'+
-    'grid ('+x+','+y+')<br>'+
-    'open lanes: '+M.deg[best]+'<br>'+
-    'reachable from here: <b>'+reach+'</b> sectors '+
-    '('+(100*reach/N).toFixed(1)+'% of galaxy)<br>'+
+    solLine+'<br>'+
+    'grid ('+x+','+y+') · open lanes: '+M.deg[best]+'<br>'+
+    'this pocket: <b>'+reach+'</b> sectors ('+(100*reach/N).toFixed(1)+'%)<br>'+
     (whHere.length?'wormholes: <span class="mono" style="color:var(--gold)">'+whHere.join(', ')+'</span>':'no wormhole here');
   draw();
+});
+
+// ---------- seed finder: scan candidates for one where Sol reaches >=90% ----------
+function solReachFor(seed){
+  const p=+C.p.value/100, whN=+C.wh.value, useWh=C.whConn.checked;
+  const adj=Array.from({length:N},()=>[]);
+  for(let d=0;d<N;d++){const{x,y}=XY[d];
+    for(const[nx,ny] of [[x+1,y],[x,y+1]]){ if(nx>=SIDE||ny>=SIDE) continue;
+      const nd=D[ny*SIDE+nx], lo=Math.min(d,nd), hi=Math.max(d,nd);
+      if((fnv(seed+'|lane|'+lo+'-'+hi)%100000)/100000<p){adj[d].push(nd);adj[nd].push(d);} }}
+  if(useWh){const w=mulberry32(fnv(seed+'|wormholes'));const set=new Set();let made=0,g=0;
+    while(made<whN&&g++<whN*60){const a=(w()*N)|0,b=(w()*N)|0;if(a===b)continue;
+      const A=XY[a],B=XY[b];if(Math.hypot(A.x-B.x,A.y-B.y)<SIDE*0.45)continue;
+      const k=Math.min(a,b)+'-'+Math.max(a,b);if(set.has(k))continue;set.add(k);adj[a].push(b);adj[b].push(a);made++;}}
+  const seen=new Uint8Array(N);seen[0]=1;const q=[0];let h=0,reach=1;
+  while(h<q.length){const u=q[h++];for(const v of adj[u]) if(!seen[v]){seen[v]=1;reach++;q.push(v);}}
+  return reach/N;
+}
+el('findSeed').addEventListener('click',()=>{
+  buildCurve(true);
+  let best={seed:C.seed.value,pct:0};
+  for(let i=1;i<=600;i++){const cand='sw-'+i, pct=solReachFor(cand);
+    if(pct>best.pct) best={seed:cand,pct};
+    if(pct>=0.90) break;}
+  C.seed.value=best.seed; sync(); build();
 });
 
 // ---------- wire controls ----------
