@@ -50,18 +50,20 @@
   <div>
     <h1>StarWonder · Universe-Physics Debug</h1>
     <div class="sub">
-      Order-5 Hilbert galaxy (32×32). Lanes connect a star to its <b>cardinal grid neighbours</b>
-      (N/E/S/W) — adjacent in space even when far apart in <span class="mono">#</span> index. Each
-      potential lane is opened deterministically from <span class="mono">hash(seed · "loᵈ-hiᵈ")</span>
-      vs the open-probability <span class="mono">p</span> — canonical ordering ⇒ bidirectional &amp;
-      stateless. Drag <span class="mono">p</span> to watch the galaxy fragment. Click a star to flood
-      its reachable region.
+      Order-5 Hilbert galaxy (32×32 = 1024 <b>sectors</b>). Every sector is travellable; a
+      <b>star</b> is an overlay present with probability <span class="mono">star likelihood</span>
+      (empty sectors are deep-space waypoints you still fly through). Lanes connect <b>cardinal grid
+      neighbours</b> (N/E/S/W) — adjacent in space even when far apart in <span class="mono">#</span>
+      index — opened deterministically from <span class="mono">hash(seed · "loᵈ-hiᵈ")</span> vs the
+      open-probability <span class="mono">p</span> (canonical ordering ⇒ bidirectional &amp;
+      stateless). Drag <span class="mono">p</span> to watch the galaxy fragment. Click a sector to
+      flood its reachable region.
     </div>
     <div class="canvas-card">
       <canvas id="map" width="720" height="720"></canvas>
       <div class="legend">
         <span><i class="dot" style="background:#cdd9ee"></i> star</span>
-        <span><i class="dot" style="background:#26344d"></i> empty cell</span>
+        <span><i class="dot" style="background:#26344d"></i> empty sector</span>
         <span><i class="sw" style="background:#3f7e78"></i> open lane</span>
         <span><i class="sw" style="background:#3a2230"></i> blocked lane</span>
         <span><i class="sw" style="background:var(--gold)"></i> wormhole</span>
@@ -78,8 +80,8 @@
         <input id="seed" type="text" value="starwonder" class="mono">
       </div>
       <div class="ctl">
-        <label>Empty cells <span class="v" id="emptyV">24</span></label>
-        <input id="empty" type="range" min="0" max="120" value="24">
+        <label>Star likelihood <span class="v" id="starV">0.80</span></label>
+        <input id="star" type="range" min="0" max="100" value="80">
       </div>
       <div class="ctl">
         <label>Lane open prob. <span class="v" id="pV">0.78</span></label>
@@ -98,7 +100,7 @@
 
     <div class="box">
       <h2>Connectivity</h2>
-      <div class="stat"><span class="k">Stars</span><span class="val" id="sStars">–</span></div>
+      <div class="stat"><span class="k">Sectors / stars</span><span class="val" id="sStars">–</span></div>
       <div class="stat"><span class="k">Open / potential lanes</span><span class="val mono" id="sLanes">–</span></div>
       <div class="stat"><span class="k">Avg degree</span><span class="val mono" id="sDeg">–</span></div>
       <div class="stat"><span class="k">Components</span><span class="val" id="sComp">–</span></div>
@@ -140,40 +142,40 @@ const sx=x=>MARGIN+(x+0.5)*CELL, sy=y=>MARGIN+(y+0.5)*CELL;
 
 // ---------- controls ----------
 const el=id=>document.getElementById(id);
-const C={seed:el('seed'),empty:el('empty'),p:el('p'),wh:el('wh'),whOn:el('whOn'),whConn:el('whConn'),
+const C={seed:el('seed'),star:el('star'),p:el('p'),wh:el('wh'),whOn:el('whOn'),whConn:el('whConn'),
   showBlocked:el('showBlocked'),colorComp:el('colorComp'),regionTint:el('regionTint')};
 
 // ---------- model ----------
 let M={};
 function build(){
-  const seed=C.seed.value, emptyN=+C.empty.value, p=+C.p.value/100, whN=+C.wh.value;
+  const seed=C.seed.value, starProb=+C.star.value/100, p=+C.p.value/100, whN=+C.wh.value;
 
-  // star placement: rank cells by hash, blank the lowest `emptyN`
-  const order=[...Array(N).keys()].sort((a,b)=>fnv(seed+'|cell|'+a)-fnv(seed+'|cell|'+b));
-  const isStar=new Uint8Array(N).fill(1);
-  for(let i=0;i<emptyN;i++) isStar[order[i]]=0;
-  const stars=[]; for(let d=0;d<N;d++) if(isStar[d]) stars.push(d);
+  // every cell is a travellable SECTOR; a star is an overlay, present with prob starProb
+  const hasStar=new Uint8Array(N);
+  for(let d=0;d<N;d++) hasStar[d]=(fnv(seed+'|star|'+d)%100000)/100000 < starProb ? 1:0;
+  const stars=[]; for(let d=0;d<N;d++) if(hasStar[d]) stars.push(d);
 
-  // potential cardinal lanes (enumerate +x and +y to hit each undirected pair once)
+  // potential cardinal lanes between ALL adjacent sectors (star or not).
+  // enumerate +x and +y so each undirected pair is hit once.
   const laneOpen=(a,b)=>{const lo=Math.min(a,b),hi=Math.max(a,b);
     return (fnv(seed+'|lane|'+lo+'-'+hi)%100000)/100000 < p;};
   const lanes=[]; let openCount=0;
-  for(const d of stars){const{x,y}=XY[d];
+  for(let d=0;d<N;d++){const{x,y}=XY[d];
     for(const[nx,ny] of [[x+1,y],[x,y+1]]){
       if(nx>=SIDE||ny>=SIDE) continue;
-      const nd=D[ny*SIDE+nx]; if(!isStar[nd]) continue;
+      const nd=D[ny*SIDE+nx];
       const open=laneOpen(d,nd); if(open) openCount++;
       lanes.push({a:d,b:nd,open});
     }
   }
 
-  // wormholes: deterministic long-range edges, biased to distance
+  // wormholes: deterministic long-range edges between any sectors, biased to distance
   const wprng=mulberry32(fnv(seed+'|wormholes'));
   const whSet=new Set(), wormholes=[];
   const minDist=SIDE*0.45;
   let guard=0;
   while(wormholes.length<whN && guard++<whN*60){
-    const a=stars[(wprng()*stars.length)|0], b=stars[(wprng()*stars.length)|0];
+    const a=(wprng()*N)|0, b=(wprng()*N)|0;
     if(a===b) continue;
     const A=XY[a],B=XY[b];
     if(Math.hypot(A.x-B.x,A.y-B.y)<minDist) continue;
@@ -182,41 +184,41 @@ function build(){
     whSet.add(key); wormholes.push({a,b});
   }
 
-  // union-find over open lanes (+ wormholes if enabled)
+  // union-find over ALL sectors via open lanes (+ wormholes if enabled)
   const parent=new Int32Array(N); for(let i=0;i<N;i++) parent[i]=i;
   const find=x=>{while(parent[x]!==x){parent[x]=parent[parent[x]];x=parent[x];}return x;};
   const uni=(a,b)=>{parent[find(a)]=find(b);};
   for(const l of lanes) if(l.open) uni(l.a,l.b);
   if(C.whConn.checked) for(const w of wormholes) uni(w.a,w.b);
 
-  // component sizes & degree
-  const size={}; for(const d of stars){const r=find(d);size[r]=(size[r]||0)+1;}
+  // component sizes & degree over all sectors
+  const size={}; for(let d=0;d<N;d++){const r=find(d);size[r]=(size[r]||0)+1;}
   const comps=Object.entries(size).map(([r,n])=>({root:+r,n})).sort((a,b)=>b.n-a.n);
   const deg=new Int16Array(N);
   for(const l of lanes) if(l.open){deg[l.a]++;deg[l.b]++;}
   if(C.whConn.checked) for(const w of wormholes){deg[w.a]++;deg[w.b]++;}
-  const iso=stars.filter(d=>deg[d]===0).length;
+  let iso=0; for(let d=0;d<N;d++) if(deg[d]===0) iso++;
 
   // component colour map
-  const compColor={}; const hues=[];
+  const compColor={};
   comps.forEach((c,i)=>{const h=(i*67)%360; compColor[c.root]=`hsl(${h} 60% 60%)`;});
 
-  M={seed,p,emptyN,whN,isStar,stars,lanes,openCount,wormholes,find,size,comps,deg,iso,compColor};
+  M={seed,p,starProb,whN,hasStar,stars,lanes,openCount,wormholes,find,size,comps,deg,iso,compColor};
   paintStats();
   draw();
 }
 
 function paintStats(){
-  const s=M, total=s.stars.length, largest=s.comps[0]?s.comps[0].n:0;
-  el('sStars').textContent=total;
+  const s=M, nStars=s.stars.length, largest=s.comps[0]?s.comps[0].n:0;
+  el('sStars').textContent=N+' / '+nStars;
   el('sLanes').textContent=s.openCount+' / '+s.lanes.length;
-  el('sDeg').textContent=(s.openCount*2/Math.max(1,total)).toFixed(2);
+  el('sDeg').textContent=(s.openCount*2/N).toFixed(2);
   const compEl=el('sComp'); compEl.textContent=s.comps.length;
   compEl.className='val '+(s.comps.length<=3?'good':s.comps.length<=10?'warn':'bad');
-  const pct=(100*largest/Math.max(1,total));
+  const pct=(100*largest/N);
   const le=el('sLarge'); le.textContent=largest+' ('+pct.toFixed(1)+'%)';
   le.className='val '+(pct>=92?'good':pct>=75?'warn':'bad');
-  el('sStrand').textContent=(total-largest);
+  el('sStrand').textContent=(N-largest);
   const ie=el('sIso'); ie.textContent=s.iso; ie.className='val '+(s.iso===0?'good':s.iso<10?'warn':'bad');
 }
 
@@ -270,19 +272,19 @@ function draw(){
     }
   }
 
-  // stars
-  for(const d of s.stars){
-    const{x,y}=XY[d]; const cx=sx(x),cy=sy(y);
-    let col='#cdd9ee', r=2.6;
-    if(s.deg[d]===0){col='#ff6b81';r=2.8;}
-    else if(selRoot!=null){ col = s.find(d)===selRoot ? '#eafff9' : '#33425a'; r = s.find(d)===selRoot?3.2:2.2; }
-    else if(C.colorComp.checked){ col=s.compColor[s.find(d)]||'#cdd9ee'; }
+  // sectors: stars are bright nodes; empty sectors are dim (still travellable) nodes
+  for(let d=0;d<N;d++){
+    const star=s.hasStar[d], {x,y}=XY[d], cx=sx(x), cy=sy(y);
+    let col, r;
+    if(s.deg[d]===0){ col='#ff6b81'; r=star?2.8:1.9; }
+    else if(selRoot!=null){
+      const inSel=s.find(d)===selRoot;
+      col = inSel ? (star?'#eafff9':'#4f9d95') : (star?'#33425a':'#1b2533');
+      r   = inSel ? (star?3.2:2.0)            : (star?2.2:1.4);
+    } else if(C.colorComp.checked){ col=s.compColor[s.find(d)]||'#cdd9ee'; r=star?2.6:1.6; }
+    else { col = star?'#cdd9ee':'#26344d'; r = star?2.6:1.6; }
     ctx.fillStyle=col; ctx.beginPath(); ctx.arc(cx,cy,r,0,7); ctx.fill();
   }
-
-  // empty cells (faint)
-  ctx.fillStyle='#26344d';
-  for(let d=0;d<N;d++) if(!s.isStar[d]){const{x,y}=XY[d];ctx.beginPath();ctx.arc(sx(x),sy(y),1.3,0,7);ctx.fill();}
 
   // selected ring
   if(selected!=null){const{x,y}=XY[selected];ctx.strokeStyle='#fff';ctx.lineWidth=1.5;
@@ -295,8 +297,8 @@ cv.addEventListener('click',e=>{
   const rect=cv.getBoundingClientRect();
   const mx=e.clientX-rect.left, my=e.clientY-rect.top;
   let best=null,bd=1e9;
-  for(const d of M.stars){const{x,y}=XY[d];const dist=Math.hypot(sx(x)-mx,sy(y)-my);if(dist<bd){bd=dist;best=d;}}
-  if(bd>CELL){selected=null;el('sel').textContent='Click a star…';draw();return;}
+  for(let d=0;d<N;d++){const{x,y}=XY[d];const dist=Math.hypot(sx(x)-mx,sy(y)-my);if(dist<bd){bd=dist;best=d;}}
+  if(bd>CELL){selected=null;el('sel').textContent='Click a sector…';draw();return;}
   selected=best;
   const root=M.find(best), reach=M.size[root]||1;
   const{x,y}=XY[best];
@@ -304,16 +306,17 @@ cv.addEventListener('click',e=>{
     .map(w=>{const o=w.a===best?w.b:w.a;return '#'+o+' ('+addr(o).split(' · ').slice(0,2).join('·')+')';});
   el('sel').innerHTML=
     '<div class="a mono">'+addr(best)+'</div>'+
+    (M.hasStar[best]?'<span class="good">★ has star</span>':'<span style="color:var(--muted)">empty sector · deep-space waypoint</span>')+'<br>'+
     'grid ('+x+','+y+')<br>'+
     'open lanes: '+M.deg[best]+'<br>'+
-    'reachable from here: <b>'+reach+'</b> stars '+
-    '('+(100*reach/M.stars.length).toFixed(1)+'% of galaxy)<br>'+
+    'reachable from here: <b>'+reach+'</b> sectors '+
+    '('+(100*reach/N).toFixed(1)+'% of galaxy)<br>'+
     (whHere.length?'wormholes: <span class="mono" style="color:var(--gold)">'+whHere.join(', ')+'</span>':'no wormhole here');
   draw();
 });
 
 // ---------- wire controls ----------
-const sync=()=>{el('emptyV').textContent=C.empty.value;el('pV').textContent=(C.p.value/100).toFixed(2);
+const sync=()=>{el('starV').textContent=(C.star.value/100).toFixed(2);el('pV').textContent=(C.p.value/100).toFixed(2);
   el('whV').textContent=C.wh.value;};
 for(const k in C){const node=C[k];const ev=(node.type==='range'||node.type==='text')?'input':'change';
   node.addEventListener(ev,()=>{sync();
