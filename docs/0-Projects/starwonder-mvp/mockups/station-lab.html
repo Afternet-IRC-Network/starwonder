@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>StarWonder — Station icon lab</title>
+<style>
+  :root{--bg:#0a0f1a;--panel:#111827;--line:#1f2a3d;--fg:#cdd9ee;--muted:#5d6b85;--accent:#5ad1c9;}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#05080f;color:var(--fg);font-family:system-ui,sans-serif;}
+  body{display:flex;justify-content:center;}
+  .wrap{width:100%;max-width:480px;padding:16px 12px 60px;}
+  h1{font-size:17px;margin:4px 6px 2px;}
+  p.note{font-size:12px;color:var(--muted);margin:0 6px 14px;}
+  .grid{display:flex;flex-wrap:wrap;gap:10px;}
+  .tile{flex:1 1 140px;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:12px 10px;display:flex;flex-direction:column;align-items:center;}
+  .big{width:128px;height:128px;image-rendering:pixelated;
+    background:radial-gradient(60% 60% at 50% 45%,#0e1730,#070b14);border-radius:10px;}
+  .iconrow{display:flex;align-items:center;gap:10px;margin-top:10px;}
+  .chip{width:30px;height:30px;border-radius:7px;background:#0c1424;border:1px solid var(--line);
+    display:grid;place-items:center;overflow:hidden;}
+  .chip canvas{width:30px;height:30px;image-rendering:pixelated;}
+  .chip.x2{width:44px;height:44px;border-radius:9px;}
+  .chip.x2 canvas{width:44px;height:44px;}
+  .cap{font-size:12px;font-weight:700;margin-top:10px;text-align:center;}
+  .sub{font-size:10px;color:var(--muted);text-align:center;margin-top:2px;line-height:1.3;}
+  .legend{font-size:10px;color:var(--muted);margin:14px 6px 0;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Station / Dock icon — variations</h1>
+  <p class="note">Each tile: big preview (so we can see the shape), then the real 30px icon and a 44px version.
+  Tell me a number (or a mix, e.g. "V3 but flatter") and I'll wire it into the Star view.</p>
+  <div class="grid" id="grid"></div>
+  <div class="legend">All steely/metallic, lit from upper-left. The key "not a planet" signal is a
+  <b>hollow center</b> + <b>thin ring</b>. "Quarter zoom" trades the whole-wheel read for visible detail at tiny size.</div>
+</div>
+
+<script>
+function hashStr(s){let h=2166136261>>>0;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+function hsl2rgb(h,s,l){h/=360;const a=s*Math.min(l,1-l);const f=n=>{const k=(n+h*12)%12;return l-a*Math.max(-1,Math.min(k-3,9-k,1));};return[f(0)*255,f(8)*255,f(4)*255];}
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+// parametric wheel station
+function drawWheel(canvas,o){
+  const N=canvas.width, ctx=canvas.getContext('2d'), img=ctx.createImageData(N,N);
+  const cx=(N-1)/2 + (o.ox||0)*N, cy=(N-1)/2 + (o.oy||0)*N;
+  const Rx=N*0.46*(o.scale||1), Ry=Rx*(o.tilt);
+  const hue=o.hue??208, sat=o.sat??0.15, lightAng=o.lightAng??-2.2;
+  const rings=o.rings, spokes=o.spokes||0;
+  function set(x,y,l){if(x<0||y<0||x>=N||y>=N)return;const i=(y*N+x)*4;const[r,g,b]=hsl2rgb(hue,sat,clamp(l,.08,.92));img.data[i]=r;img.data[i+1]=g;img.data[i+2]=b;img.data[i+3]=255;}
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    const dx=x-cx,dy=y-cy,ex=dx/Rx,ey=dy/Ry,e=Math.hypot(ex,ey),ang=Math.atan2(dy,dx);
+    let drawn=false,l=0;
+    for(const [os,w] of rings){
+      if(e<=os && e>=os-w){
+        const depth=(dy>0)?1:0.58;                       // front (lower) brighter
+        const light=0.5+0.5*Math.cos(ang-lightAng);
+        l=Math.max(l,0.30+0.58*light*depth); drawn=true;
+      }
+    }
+    if(spokes){
+      const oi=o.spokeOuter??(rings[rings.length-1][0]-rings[rings.length-1][1]);
+      const ii=o.spokeInner??0.0;
+      if(e<oi && e>ii){
+        for(let s=0;s<spokes;s++){
+          const sa=s*Math.PI*2/spokes+(o.spokeRot??0.4);
+          const proj=ex*Math.cos(sa)+ey*Math.sin(sa), perp=-ex*Math.sin(sa)+ey*Math.cos(sa);
+          if(proj>0 && Math.abs(perp)<(o.spokeW??0.06)){l=Math.max(l,0.40);drawn=true;break;}
+        }
+      }
+    }
+    if(o.hub){const hub=Math.hypot(dx,dy/o.tilt);if(hub<=N*o.hub){l=0.5+0.35*((cx-dx)/N);drawn=true;}}
+    if(drawn)set(x,y,l);
+  }
+  ctx.putImageData(img,0,0);
+}
+
+// Trek-ish spacedock: vertical body + dome + waist ring
+function drawDock(canvas,o){
+  const N=canvas.width,ctx=canvas.getContext('2d'),img=ctx.createImageData(N,N);
+  const cx=(N-1)/2,hue=o.hue??208,sat=0.15;
+  function set(x,y,l){if(x<0||y<0||x>=N||y>=N)return;const i=(y*N+x)*4;const[r,g,b]=hsl2rgb(hue,sat,clamp(l,.08,.92));img.data[i]=r;img.data[i+1]=g;img.data[i+2]=b;img.data[i+3]=255;}
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    const dx=x-cx; let drawn=false,l=0;
+    // dome head
+    const hx=dx/(N*0.20), hy=(y-N*0.30)/(N*0.17);
+    if(hx*hx+hy*hy<=1){l=0.6+0.3*((cx-dx)/N);drawn=true;}
+    // spire
+    if(Math.abs(dx)<N*0.055 && y>N*0.22 && y<N*0.84){l=Math.max(l,0.45+0.25*((cx-dx)/N));drawn=true;}
+    // waist ring (tilted)
+    const ex=dx/(N*0.42), ey=(y-N*0.62)/(N*0.13), e=Math.hypot(ex,ey);
+    if(e<=1 && e>=0.74){const depth=(y>N*0.62)?1:0.6;l=Math.max(l,0.34+0.5*depth*(0.5+0.5*((cx-dx)/N)));drawn=true;}
+    if(drawn)set(x,y,l);
+  }
+  ctx.putImageData(img,0,0);
+}
+
+const VARIANTS=[
+  {name:"V1 — Flat hollow ring", sub:"rounder/top-down, thin, no hub", fn:drawWheel,
+   o:{tilt:0.62, rings:[[1.0,0.17]]}},
+  {name:"V2 — Ring + small hub + struts", sub:"tiny hub, 4 short struts", fn:drawWheel,
+   o:{tilt:0.58, rings:[[1.0,0.15]], hub:0.05, spokes:4, spokeOuter:0.85, spokeW:0.05}},
+  {name:"V3 — Double wheel (2001)", sub:"two rings, vertical axle", fn:drawWheel,
+   o:{tilt:0.55, rings:[[1.0,0.13],[0.64,0.12]], hub:0.045, spokes:2, spokeRot:1.5708, spokeOuter:0.64, spokeW:0.06}},
+  {name:"V4 — Thin torus, more side-on", sub:"still a little perspective", fn:drawWheel,
+   o:{tilt:0.34, rings:[[1.0,0.15]]}},
+  {name:"V5 — Quarter zoom", sub:"crop into one arc + spoke", fn:drawWheel,
+   o:{tilt:0.5, rings:[[1.0,0.20]], hub:0.05, spokes:6, scale:2.5, ox:-0.55, oy:0.55, spokeOuter:0.85}},
+  {name:"V6 — Trek spacedock", sub:"vertical body + waist ring", fn:drawDock, o:{}},
+];
+
+const grid=document.getElementById('grid');
+VARIANTS.forEach(v=>{
+  const t=document.createElement('div');t.className='tile';
+  const big=document.createElement('canvas');big.className='big';big.width=72;big.height=72;
+  const row=document.createElement('div');row.className='iconrow';
+  const c1=document.createElement('div');c1.className='chip';const cv1=document.createElement('canvas');cv1.width=30;cv1.height=30;c1.appendChild(cv1);
+  const c2=document.createElement('div');c2.className='chip x2';const cv2=document.createElement('canvas');cv2.width=44;cv2.height=44;c2.appendChild(cv2);
+  row.append(c1,c2);
+  const cap=document.createElement('div');cap.className='cap';cap.textContent=v.name;
+  const sub=document.createElement('div');sub.className='sub';sub.textContent=v.sub;
+  t.append(big,row,cap,sub);grid.appendChild(t);
+  v.fn(big,v.o); v.fn(cv1,v.o); v.fn(cv2,v.o);
+});
+</script>
+</body>
+</html>
