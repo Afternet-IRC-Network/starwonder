@@ -51,8 +51,10 @@ B's app chrome with **canvas-rendered pixel/voxel** art instead of ASCII:
 - **Planet:** low-res sphere, seeded terrain bands, palette-by-type (ocean/lava/ice/arid),
   2×2 Bayer dithering, fixed-light shading — and it **slowly rotates** (terrain spins in
   longitude while the light stays put, so the terminator behaves correctly).
-- **Ships & stations:** mirror-symmetric procedural pixel sprites, seeded per entity, hue by
-  faction/role (teal station, red pirate, green friendly trader). One drifts across orbit.
+- **Ships:** mirror-symmetric procedural pixel sprites, seeded per entity, hue by role
+  (red pirate, green friendly trader). One drifts across orbit.
+- **Stations/Docks:** a procedural **2001-style wheel** — tilted elliptical ring + central
+  hub + spokes, depth-shaded, steely/metallic. Used as the shared icon for all docks.
 - Everything is generated from the seed → 1000 unique-but-stable bodies & a sprite per ship
   for free.
 

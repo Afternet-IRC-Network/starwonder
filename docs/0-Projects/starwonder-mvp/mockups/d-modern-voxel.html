@@ -82,7 +82,7 @@
   <div class="sec">
     <div class="label">In orbit</div>
     <div class="card">
-      <div class="ic"><canvas id="spr-station" width="20" height="20"></canvas></div>
+      <div class="ic"><canvas id="spr-station" width="30" height="30"></canvas></div>
       <div class="t"><b>Vesper Dock</b><div class="s">trade station · Traders' Guild</div></div>
       <span class="pill buy">buy ORG</span><span class="pill sell">sell FUEL</span>
     </div>
@@ -185,6 +185,44 @@ function makeSprite(canvas, seedStr, hue){
   }
 }
 
+// ---------- procedural WHEEL STATION (2001 / starbase style) ----------
+// elliptical ring (perspective tilt) + central hub + spokes, depth-shaded.
+function hsl2rgb(h,s,l){h/=360;const a=s*Math.min(l,1-l);const f=n=>{const k=(n+h*12)%12;return l-a*Math.max(-1,Math.min(k-3,9-k,1));};return[f(0)*255,f(8)*255,f(4)*255];}
+function makeStation(canvas, seedStr, hue){
+  const rng=mulberry32(hashStr(seedStr+"|station"));
+  const N=canvas.width, ctx=canvas.getContext('2d'), img=ctx.createImageData(N,N);
+  const cx=(N-1)/2, cy=(N-1)/2;
+  const Rx=N*0.44, Ry=Rx*0.42;        // tilt → ellipse
+  const ringW=0.30, rh=N*0.13;        // ring thickness, hub radius
+  const spokes=4+Math.floor(rng()*3); // 4–6 spokes
+  const sat=0.16;                     // low sat = steely/metallic
+  const lightAng=-2.2;                // light from upper-left
+  function px(x,y,l){const i=(y*N+x)*4;const[r,g,b]=hsl2rgb(hue,sat,Math.max(.08,Math.min(.86,l)));img.data[i]=r;img.data[i+1]=g;img.data[i+2]=b;img.data[i+3]=255;}
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    const dx=x-cx, dy=y-cy;
+    const ex=dx/Rx, ey=dy/Ry, e=Math.hypot(ex,ey), ang=Math.atan2(dy,dx);
+    let drawn=false;
+    // ring
+    if(e<=1.0 && e>=1.0-ringW){
+      const depth=(dy>0)?1:0.62;                       // front (lower) brighter than back
+      const light=0.5+0.5*Math.cos(ang-lightAng);
+      px(x,y, 0.30+0.55*light*depth); drawn=true;
+    }
+    // spokes (inside the ring)
+    if(!drawn && e<1-ringW){
+      for(let s=0;s<spokes;s++){
+        const sa=s*Math.PI*2/spokes + 0.4;
+        const proj=ex*Math.cos(sa)+ey*Math.sin(sa), perp=-ex*Math.sin(sa)+ey*Math.cos(sa);
+        if(proj>0 && Math.abs(perp)<0.07){ px(x,y,0.42); drawn=true; break; }
+      }
+    }
+    // central hub (slightly squashed sphere)
+    const hub=Math.hypot(dx, dy/0.78);
+    if(hub<=rh){ px(x,y, 0.55+0.4*((cx-dx)/N) ); drawn=true; }
+  }
+  ctx.putImageData(img,0,0);
+}
+
 // wire it up
 const ptype="ocean";
 const spin = makePlanet(document.getElementById('planet'), "R7·S3·#412", ptype);
@@ -192,7 +230,7 @@ document.getElementById('ptype').textContent="LETHE — ocean world · 0.9g · b
 let th=0; (function loop(){ spin(th); th+=0.0045; requestAnimationFrame(loop); })();
 
 makeSprite(document.getElementById('orbiter'),    "vesper-trader-2", 190);
-makeSprite(document.getElementById('spr-station'),"vesper-dock",     185);
+makeStation(document.getElementById('spr-station'),"vesper-dock",   210);
 makeSprite(document.getElementById('spr-pirate'), "corsair-raider",  352);
 makeSprite(document.getElementById('spr-trader'), "trader-jax",      140);
 
