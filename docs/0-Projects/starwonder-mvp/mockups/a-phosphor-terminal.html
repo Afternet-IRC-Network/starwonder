@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>StarWonder — Star View — A: Phosphor Terminal</title>
+<style>
+  :root{
+    --bg:#000600; --fg:#33ff77; --dim:#1c7a3e; --hot:#aaffcc; --warn:#ffd24a; --bad:#ff5b5b;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#000;color:var(--fg);
+    font-family:"DejaVu Sans Mono","SFMono-Regular",Menlo,Consolas,monospace;}
+  body{display:flex;justify-content:center;min-height:100vh;}
+  .phone{width:100%;max-width:420px;min-height:100vh;background:var(--bg);
+    position:relative;overflow:hidden;
+    box-shadow:0 0 60px #0f3, inset 0 0 120px #00220a;}
+  /* CRT scanlines + flicker */
+  .phone::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:50;
+    background:repeating-linear-gradient(0deg,rgba(0,0,0,.18)0 1px,transparent 1px 3px);
+    mix-blend-mode:multiply;}
+  .glow{text-shadow:0 0 4px var(--fg);}
+  .wrap{padding:10px 12px 78px;}
+  hr{border:none;border-top:1px dashed var(--dim);margin:8px 0;}
+  .row{display:flex;justify-content:space-between;align-items:baseline;gap:8px;}
+  .loc{font-size:13px;letter-spacing:1px;color:var(--hot);}
+  .addr{font-size:11px;color:var(--dim);}
+  .energy{font-size:12px;}
+  .bar{display:inline-block;color:var(--warn);}
+  .barempty{color:var(--dim);}
+  pre.planet{margin:6px 0;line-height:1.0;font-size:11px;text-align:center;
+    color:var(--fg);text-shadow:0 0 5px var(--dim);white-space:pre;}
+  .label{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:2px;}
+  .item{font-size:13px;margin:2px 0;}
+  .tag{font-size:10px;border:1px solid var(--dim);padding:0 4px;color:var(--hot);}
+  .tag.sell{color:var(--warn);border-color:var(--warn);}
+  .tag.buy{color:var(--hot);}
+  .ship.bad{color:var(--bad);}
+  .lane{font-size:13px;margin:1px 0;}
+  .lane .k{color:var(--hot);}
+  .lane .u{color:var(--dim);}
+  .lane .wh{color:var(--warn);}
+  .actions{position:fixed;left:50%;transform:translateX(-50%);bottom:46px;
+    width:100%;max-width:420px;display:flex;gap:6px;padding:6px 10px;
+    background:linear-gradient(#0006,#000a);}
+  .btn{flex:1;text-align:center;border:1px solid var(--fg);color:var(--fg);
+    background:#031a0c;padding:8px 0;font-size:12px;letter-spacing:1px;
+    text-shadow:0 0 4px var(--fg);}
+  .btn:active{background:var(--fg);color:#000;}
+  .nav{position:fixed;left:50%;transform:translateX(-50%);bottom:0;width:100%;max-width:420px;
+    display:flex;border-top:1px solid var(--dim);background:#020e06;}
+  .nav a{flex:1;text-align:center;padding:8px 0;font-size:10px;color:var(--dim);
+    text-decoration:none;letter-spacing:1px;}
+  .nav a.on{color:var(--hot);text-shadow:0 0 5px var(--hot);}
+</style>
+</head>
+<body>
+<div class="phone"><div class="wrap glow">
+
+  <div class="row">
+    <div class="loc">VESPER ANCHORAGE</div>
+    <div class="energy"><span class="bar">▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮</span><span class="barempty">▯▯▯▯▯▯</span> 18/24 ⚡</div>
+  </div>
+  <div class="addr">R7 · S3 · #412 &nbsp;|&nbsp; class: trade &nbsp;|&nbsp; +1⚡/hr</div>
+
+  <pre class="planet" id="planet"></pre>
+  <div class="addr" style="text-align:center" id="ptype"></div>
+
+  <hr>
+  <div class="label">In orbit</div>
+  <div class="item">▣ <b>Vesper Dock</b> &nbsp;<span class="tag buy">BUY org</span> <span class="tag sell">SELL fuel</span></div>
+  <div class="item">◍ Lethe &nbsp;<span style="color:var(--dim)">— ocean world (no landing)</span></div>
+
+  <hr>
+  <div class="label">Also here</div>
+  <div class="item ship bad">‹×› Corsair raider &nbsp;<span style="color:var(--dim)">NPC · hostile</span></div>
+  <div class="item">‹•› trader <b>jax</b> &nbsp;<span style="color:var(--dim)">idle</span></div>
+
+  <hr>
+  <div class="label">Warp lanes</div>
+  <div class="lane"><span class="k">▸ #411</span> Dunmoor &nbsp;<span style="color:var(--dim)">1⚡</span></div>
+  <div class="lane"><span class="k">▸ #418</span> Halcyon Gate &nbsp;<span style="color:var(--dim)">1⚡</span></div>
+  <div class="lane"><span class="u">▸ #407</span> ??? unexplored &nbsp;<span style="color:var(--dim)">1⚡</span></div>
+  <div class="lane"><span class="wh">◌ WORMHOLE → R2·S9</span> &nbsp;<span style="color:var(--dim)">3⚡</span></div>
+
+</div>
+
+<div class="actions glow">
+  <div class="btn">DOCK</div>
+  <div class="btn">SCAN</div>
+  <div class="btn">MOVE</div>
+  <div class="btn">MAP</div>
+</div>
+<nav class="nav">
+  <a class="on" href="#">◉ STAR</a>
+  <a href="#">◇ MAP</a>
+  <a href="#">▣ DOCK</a>
+  <a href="#">△ SHIP</a>
+  <a href="#">≡ LOG</a>
+</nav>
+</div>
+
+<script>
+// ---- deterministic planet from the sector address ----
+function hashStr(s){let h=2166136261>>>0;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+
+function renderPlanet(seedStr, opts){
+  const rng = mulberry32(hashStr(seedStr));
+  const W=opts.w||34, H=opts.h||16, R=0.92;
+  // a few seeded sine bands = surface terrain
+  const bands=[]; for(let i=0;i<4;i++) bands.push({fx:1+rng()*4,fy:1+rng()*4,fz:1+rng()*4,ph:rng()*6.28,a:rng()});
+  // light direction (upper-left)
+  const lx=-0.5,ly=-0.6,lz=0.62;
+  const ramp=" .,:;+*oО#%@"; // density ramp (our own)
+  let out="";
+  for(let yy=0;yy<H;yy++){
+    let line="";
+    for(let xx=0;xx<W;xx++){
+      const x=(xx/(W-1))*2-1;
+      const y=((yy/(H-1))*2-1)*1.0; // chars ~2:1, W already wide to compensate
+      const r2=x*x+y*y;
+      if(r2>R*R){ line+=" "; continue; }
+      const z=Math.sqrt(Math.max(0,R*R-r2));
+      // terrain value
+      let t=0,amp=0; for(const b of bands){ t+=b.a*Math.sin(b.fx*x+b.fy*y+b.fz*z+b.ph); amp+=b.a; }
+      t=(t/amp+1)/2;
+      // sphere lighting
+      let L=(x*lx+y*ly+z*lz); L=Math.max(0,L);
+      let v=0.35*t+0.85*L; v=Math.max(0,Math.min(0.999,v));
+      line+=ramp[Math.floor(v*ramp.length)];
+    }
+    out+=line+"\n";
+  }
+  return out;
+}
+document.getElementById('planet').textContent = renderPlanet("R7·S3·#412", {w:34,h:15});
+document.getElementById('ptype').textContent = "LETHE — ocean world · 0.9g · thin atmosphere";
+</script>
+</body>
+</html>

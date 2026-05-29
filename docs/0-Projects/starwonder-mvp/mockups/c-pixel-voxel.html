@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>StarWonder — Star View — C: Pixel / Voxel</title>
+<style>
+  :root{
+    --bg:#0b0820; --panel:#191235; --line:#2e2660; --fg:#e8e4ff; --muted:#8a82c0;
+    --accent:#ff6fae; --accent2:#46e0d0; --gold:#ffcf4a; --bad:#ff5d6c; --good:#5be08a;
+  }
+  *{box-sizing:border-box;image-rendering:pixelated;}
+  html,body{margin:0;background:#050410;color:var(--fg);
+    font-family:"DejaVu Sans Mono",Menlo,Consolas,monospace;letter-spacing:.5px;}
+  body{display:flex;justify-content:center;min-height:100vh;}
+  .phone{width:100%;max-width:420px;min-height:100vh;background:var(--bg);
+    position:relative;overflow:hidden;padding-bottom:120px;
+    background-image:radial-gradient(#2e2660 1px,transparent 1px);background-size:6px 6px;}
+  .scrim{position:relative;z-index:1;}
+  header{padding:14px;}
+  .loc{font-size:16px;font-weight:bold;text-transform:uppercase;text-shadow:2px 2px 0 #000;}
+  .addr{font-size:11px;color:var(--muted);margin-top:3px;}
+  .energy{margin-top:10px;font-size:11px;display:flex;align-items:center;gap:6px;}
+  .track{flex:1;height:12px;background:#0c0a1e;border:2px solid var(--line);display:flex;padding:2px;gap:2px;}
+  .pip{flex:1;background:#241c48;}
+  .pip.on{background:var(--accent2);}
+  .viewport{margin:4px 14px;border:3px solid var(--line);background:#070518;
+    box-shadow:0 0 0 2px #000 inset;display:grid;place-items:center;padding:10px 0 6px;}
+  canvas#planet{width:200px;height:200px;}
+  .ptype{text-align:center;color:var(--muted);font-size:11px;margin:4px 0 0;}
+  .sec{padding:4px 14px;}
+  .label{font-size:10px;color:var(--gold);letter-spacing:2px;margin:12px 0 6px;text-shadow:1px 1px 0 #000;}
+  .card{display:flex;align-items:center;gap:10px;background:var(--panel);border:2px solid var(--line);
+    padding:9px 10px;margin:6px 0;box-shadow:3px 3px 0 #000;}
+  .ic{width:30px;height:30px;display:grid;place-items:center;font-size:16px;background:#0c0a1e;border:2px solid var(--line);}
+  .t{flex:1} .t b{font-size:13px} .t .s{font-size:10px;color:var(--muted)}
+  .pill{font-size:9px;padding:2px 6px;border:2px solid var(--line);text-transform:uppercase;}
+  .pill.buy{color:var(--good);border-color:var(--good)} .pill.sell{color:var(--gold);border-color:var(--gold)}
+  .pill.bad{color:var(--bad);border-color:var(--bad)}
+  .lanes{display:flex;gap:8px;overflow-x:auto;padding:2px 14px 4px;}
+  .lane{min-width:104px;background:#120e2c;border:2px solid var(--line);padding:9px;box-shadow:3px 3px 0 #000;}
+  .lane .n{font-weight:bold;font-size:12px} .lane .d{font-size:10px;color:var(--muted);margin-top:3px}
+  .lane.u{border-style:dashed} .lane.u .n{color:var(--muted)}
+  .lane.wh{border-color:var(--accent)} .lane.wh .n{color:var(--accent)}
+  .actions{position:fixed;left:50%;transform:translateX(-50%);bottom:60px;width:100%;max-width:420px;
+    display:flex;gap:8px;padding:8px 14px;}
+  .btn{flex:1;text-align:center;padding:12px 0;font-size:12px;font-weight:bold;text-transform:uppercase;
+    background:var(--panel);border:2px solid var(--line);color:var(--fg);box-shadow:3px 3px 0 #000;}
+  .btn.primary{background:var(--accent);color:#1a0a14;border-color:#ff9ec8;}
+  .btn:active{transform:translate(3px,3px);box-shadow:none;}
+  nav{position:fixed;left:50%;transform:translateX(-50%);bottom:0;width:100%;max-width:420px;
+    display:flex;background:#0a0820;border-top:3px solid var(--line);}
+  nav a{flex:1;text-align:center;padding:9px 0 12px;font-size:9px;color:var(--muted);text-decoration:none;text-transform:uppercase;}
+  nav a .g{display:block;font-size:16px;margin-bottom:2px;}
+  nav a.on{color:var(--accent2);}
+</style>
+</head>
+<body>
+<div class="phone"><div class="scrim">
+  <header>
+    <div class="loc">Vesper Anchorage</div>
+    <div class="addr">R7·S3·#412 — TRADE SYSTEM</div>
+    <div class="energy">⚡<div class="track" id="track"></div><span>18/24</span></div>
+  </header>
+
+  <div class="viewport">
+    <canvas id="planet" width="48" height="48"></canvas>
+  </div>
+  <div class="ptype" id="ptype"></div>
+
+  <div class="sec">
+    <div class="label">▸ IN ORBIT</div>
+    <div class="card"><div class="ic">▦</div><div class="t"><b>Vesper Dock</b><div class="s">trade station</div></div>
+      <span class="pill buy">buy org</span><span class="pill sell">sell fuel</span></div>
+    <div class="card"><div class="ic">◍</div><div class="t"><b>Lethe</b><div class="s">ocean world · scenery</div></div></div>
+
+    <div class="label">▸ ALSO HERE</div>
+    <div class="card"><div class="ic" style="color:var(--bad)">☠</div><div class="t"><b>Corsair raider</b><div class="s">NPC pirate</div></div>
+      <span class="pill bad">hostile</span></div>
+  </div>
+
+  <div class="label" style="padding-left:14px">▸ WARP LANES</div>
+  <div class="lanes">
+    <div class="lane"><div class="n">Dunmoor</div><div class="d">#411 · 1⚡</div></div>
+    <div class="lane"><div class="n">Halcyon Gate</div><div class="d">#418 · 1⚡</div></div>
+    <div class="lane u"><div class="n">???</div><div class="d">#407 · unexplored</div></div>
+    <div class="lane wh"><div class="n">◌ Wormhole</div><div class="d">→ R2·S9 · 3⚡</div></div>
+  </div>
+
+  <div class="actions">
+    <div class="btn primary">Dock</div><div class="btn">Scan</div><div class="btn">Move</div>
+  </div>
+  <nav>
+    <a class="on"><span class="g">◉</span>Star</a><a><span class="g">◇</span>Map</a>
+    <a><span class="g">▦</span>Dock</a><a><span class="g">△</span>Ship</a><a><span class="g">≡</span>Log</a>
+  </nav>
+</div></div>
+
+<script>
+function hashStr(s){let h=2166136261>>>0;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+
+// pixel planet: low-res sphere, palette ramp picked from seed, 2x2 bayer dithering
+function renderPlanet(seedStr){
+  const rng=mulberry32(hashStr(seedStr));
+  const cv=document.getElementById('planet'),N=cv.width,ctx=cv.getContext('2d');
+  const img=ctx.createImageData(N,N);
+  // ocean-world palette (deep -> shallow -> land -> peak), seed could pick other sets
+  const pal=[[18,38,96],[28,72,150],[40,120,170],[60,160,150],[120,180,110],[200,210,180]];
+  const bands=[];for(let i=0;i<3;i++)bands.push({fx:2+rng()*5,fy:2+rng()*5,fz:2+rng()*5,ph:rng()*6.28});
+  const bayer=[[0,2],[3,1]];
+  const lx=-0.5,ly=-0.55,lz=0.66, R=N/2-1, cx=N/2, cy=N/2;
+  for(let py=0;py<N;py++)for(let px=0;px<N;px++){
+    const x=(px-cx)/R, y=(py-cy)/R, r2=x*x+y*y, idx=(py*N+px)*4;
+    if(r2>1){img.data[idx+3]=0;continue;}
+    const z=Math.sqrt(1-r2);
+    let t=0;for(const b of bands)t+=Math.sin(b.fx*x+b.fy*y+b.fz*z+b.ph); t=(t/bands.length+1)/2;
+    let L=Math.max(.08,x*lx+y*ly+z*lz);
+    // terrain selects base palette index, lighting shifts it, dither smooths bands
+    let f=t*(pal.length-1)*0.7 + L*(pal.length-1)*0.6;
+    f+= (bayer[py&1][px&1]/4 - .5);
+    let pi=Math.max(0,Math.min(pal.length-1,Math.round(f)));
+    let [r,g,bl]=pal[pi];
+    const lit=0.45+L*0.75;
+    img.data[idx]=Math.min(255,r*lit);img.data[idx+1]=Math.min(255,g*lit);img.data[idx+2]=Math.min(255,bl*lit);img.data[idx+3]=255;
+  }
+  ctx.putImageData(img,0,0);
+}
+renderPlanet("R7·S3·#412");
+document.getElementById('ptype').textContent="LETHE — ocean world · 0.9g";
+// energy pips
+const tr=document.getElementById('track');for(let i=0;i<24;i++){const d=document.createElement('div');d.className='pip'+(i<18?' on':'');tr.appendChild(d);}
+</script>
+</body>
+</html>
