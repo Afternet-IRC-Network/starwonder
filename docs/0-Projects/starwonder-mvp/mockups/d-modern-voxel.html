@@ -33,6 +33,8 @@
   /* a tiny voxel ship drifting across orbit */
   canvas#station-hero{position:absolute;width:30px;height:30px;image-rendering:pixelated;
     left:60%;top:30%;filter:drop-shadow(0 0 5px rgba(120,180,220,.6));}
+  canvas.orbiter{position:absolute;left:50%;top:46%;width:22px;height:22px;
+    image-rendering:pixelated;filter:drop-shadow(0 0 3px #000);will-change:transform;}
   .ptype{position:absolute;left:0;right:0;bottom:8px;text-align:center;color:var(--muted);font-size:11px;}
   .sec{padding:6px 16px;}
   .label{font-size:10px;color:var(--muted);letter-spacing:2.5px;text-transform:uppercase;margin:10px 0 6px;}
@@ -76,6 +78,8 @@
     <canvas class="stars" id="stars" width="420" height="230"></canvas>
     <canvas id="planet" width="72" height="72"></canvas>
     <canvas id="station-hero" width="30" height="30"></canvas>
+    <canvas id="orb-pirate" class="orbiter" width="20" height="20"></canvas>
+    <canvas id="orb-trader" class="orbiter" width="20" height="20"></canvas>
     <div class="ptype" id="ptype"></div>
   </div>
 
@@ -234,7 +238,28 @@ drawWheel(document.getElementById('spr-station'), STATION);   // orbit-list icon
 
 // hero wheel station over the planet — slowly rotating
 const hero=document.getElementById('station-hero');
-let th=0; (function loop(){ spin(th); drawWheel(hero, Object.assign({}, STATION, {rot: th*0.6})); th+=0.0045; requestAnimationFrame(loop); })();
+
+// ships present at the star, shown orbiting the planet (tilted ellipse, slow drift,
+// scale+opacity fake the depth as they pass in front / behind)
+const orbits=[
+  {el:document.getElementById('orb-pirate'), seed:"corsair-raider", hue:352, ph:0.4, sp:1.7, rx:80, ry:34},
+  {el:document.getElementById('orb-trader'), seed:"trader-jax",     hue:140, ph:3.7, sp:1.1, rx:96, ry:40},
+];
+orbits.forEach(o=>makeSprite(o.el,o.seed,o.hue));
+
+let th=0;
+(function loop(){
+  spin(th);
+  drawWheel(hero, Object.assign({}, STATION, {rot: th*0.6}));
+  for(const o of orbits){
+    const a=o.ph+th*o.sp, s=Math.sin(a);
+    const x=Math.cos(a)*o.rx, y=s*o.ry;
+    const sc=(0.85+0.25*s).toFixed(2), op=(0.55+0.45*((s+1)/2)).toFixed(2);
+    o.el.style.transform=`translate(calc(-50% + ${x.toFixed(1)}px), calc(-50% + ${y.toFixed(1)}px)) scale(${sc})`;
+    o.el.style.opacity=op;            // fainter + smaller when behind, bright + larger in front
+  }
+  th+=0.0045; requestAnimationFrame(loop);
+})();
 makeSprite(document.getElementById('spr-pirate'), "corsair-raider",  352);
 makeSprite(document.getElementById('spr-trader'), "trader-jax",      140);
 
