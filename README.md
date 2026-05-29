@@ -20,3 +20,10 @@ Everything currently lives in [`docs/`](docs/) (organized with [PARA](docs/READM
 - [Technical Infrastructure](docs/0-Projects/starwonder-mvp/technical-infrastructure.md)
 - [Roadmap](docs/0-Projects/starwonder-mvp/roadmap.md)
 - [Art-direction mockups](docs/0-Projects/starwonder-mvp/mockups/) — open the `.html` files in a browser
+
+## License
+
+Licensed under the **GNU General Public License v3.0** — see [`LICENSE`](LICENSE).
+
+© 2026 the StarWonder authors. You may use, modify, and redistribute this under the terms
+of the GPLv3; derivative works must remain under the GPLv3.
