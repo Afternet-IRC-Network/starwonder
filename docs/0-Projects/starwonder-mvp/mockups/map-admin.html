@@ -91,6 +91,13 @@
         <input id="p" type="range" min="0" max="100" value="55">
       </div>
       <div class="ctl">
+        <label>Core bias <span class="v" id="biasV">0.20</span></label>
+        <input id="bias" type="range" min="0" max="100" value="20">
+        <div style="font-size:10px;color:var(--muted);margin-top:3px;line-height:1.4">
+          tilts lane prob. by distance from Sol: core a touch denser, rim rougher (mean ≈ p)
+        </div>
+      </div>
+      <div class="ctl">
         <label>Wormholes <span class="v" id="whV">50</span></label>
         <input id="wh" type="range" min="0" max="80" value="50">
       </div>
@@ -99,6 +106,7 @@
       <label class="chk"><input type="checkbox" id="showBlocked" checked> show blocked lanes</label>
       <label class="chk"><input type="checkbox" id="colorComp"> colour by component</label>
       <label class="chk"><input type="checkbox" id="regionTint" checked> tint 16 regions</label>
+      <label class="chk"><input type="checkbox" id="gradOn" checked> Sol-distance gradient</label>
     </div>
 
     <div class="box">
@@ -161,14 +169,18 @@ const sx=x=>MARGIN+(x+0.5)*CELL, sy=y=>MARGIN+(y+0.5)*CELL;
 
 // ---------- controls ----------
 const el=id=>document.getElementById(id);
-const C={seed:el('seed'),star:el('star'),p:el('p'),wh:el('wh'),whOn:el('whOn'),whConn:el('whConn'),
-  showBlocked:el('showBlocked'),colorComp:el('colorComp'),regionTint:el('regionTint')};
+const C={seed:el('seed'),star:el('star'),p:el('p'),bias:el('bias'),wh:el('wh'),whOn:el('whOn'),whConn:el('whConn'),
+  showBlocked:el('showBlocked'),colorComp:el('colorComp'),regionTint:el('regionTint'),gradOn:el('gradOn')};
 
 // ---------- model ----------
 let M={};
 function build(){
   buildCurve(true);   // pinwheel is now the only layout: Sol (#0) dead-centre
-  const seed=C.seed.value, starProb=+C.star.value/100, p=+C.p.value/100, whN=+C.wh.value;
+  const seed=C.seed.value, starProb=+C.star.value/100, p=+C.p.value/100, whN=+C.wh.value, bias=+C.bias.value/100;
+
+  // as-the-crow-flies distance from Sol (XY[0]), normalised 0 (core) .. 1 (rim)
+  const sol=XY[0]; const sdist=new Float64Array(N); let maxD=1e-9;
+  for(let d=0;d<N;d++){const{x,y}=XY[d];const dd=Math.hypot(x-sol.x,y-sol.y);sdist[d]=dd;if(dd>maxD)maxD=dd;}
 
   // every cell is a travellable SECTOR; a star is an overlay, present with prob starProb
   const hasStar=new Uint8Array(N);
@@ -177,8 +189,12 @@ function build(){
 
   // potential cardinal lanes between ALL adjacent sectors (star or not).
   // enumerate +x and +y so each undirected pair is hit once.
+  // Core bias: tilt the open prob by the lane's mean distance from Sol — denser core,
+  // rougher rim — centred so the galaxy-wide mean stays ≈ p (t=0.5 ⇒ unchanged).
   const laneOpen=(a,b)=>{const lo=Math.min(a,b),hi=Math.max(a,b);
-    return (fnv(seed+'|lane|'+lo+'-'+hi)%100000)/100000 < p;};
+    const t=((sdist[a]+sdist[b])/2)/maxD;
+    let pe=p*(1+bias*(0.5-t)); if(pe<0)pe=0; else if(pe>1)pe=1;
+    return (fnv(seed+'|lane|'+lo+'-'+hi)%100000)/100000 < pe;};
   const lanes=[]; let openCount=0;
   for(let d=0;d<N;d++){const{x,y}=XY[d];
     for(const[nx,ny] of [[x+1,y],[x,y+1]]){
@@ -231,7 +247,7 @@ function build(){
   const compColor={};
   comps.forEach((c,i)=>{const h=(i*67)%360; compColor[c.root]=`hsl(${h} 60% 60%)`;});
 
-  M={seed,p,starProb,whN,hasStar,stars,lanes,openCount,wormholes,find,size,comps,deg,iso,compColor,dist,solReach};
+  M={seed,p,bias,starProb,whN,hasStar,stars,lanes,openCount,wormholes,find,size,comps,deg,iso,compColor,dist,solReach,sdist,maxD};
   paintStats();
   draw();
 }
@@ -259,6 +275,14 @@ function draw(){
   ctx.clearRect(0,0,LOGICAL,LOGICAL);
   const s=M;
   const selRoot = selected!=null ? s.find(selected) : null;
+
+  // Sol-distance gradient: warm gold at the core (Sol) fading to cold dark blue at the rim.
+  // Visualises exactly what Core bias multiplies the lane probability by.
+  if(C.gradOn.checked && s.sdist){
+    for(let d=0;d<N;d++){const{x,y}=XY[d];const t=s.sdist[d]/s.maxD;
+      ctx.fillStyle=`hsla(${45+t*180}, 70%, ${56-t*44}%, 0.30)`;
+      ctx.fillRect(MARGIN+x*CELL,MARGIN+y*CELL,CELL,CELL);}
+  }
 
   // region tint (16 clean 8×8 squares = d>>6) — fill + outline + label
   if(C.regionTint.checked){
@@ -372,12 +396,15 @@ cv.addEventListener('click',e=>{
 
 // ---------- seed finder: scan candidates for one where Sol reaches >=90% ----------
 function solReachFor(seed){
-  const p=+C.p.value/100, whN=+C.wh.value, useWh=C.whConn.checked;
+  const p=+C.p.value/100, whN=+C.wh.value, useWh=C.whConn.checked, bias=+C.bias.value/100;
+  const sol=XY[0]; const sdist=new Float64Array(N); let maxD=1e-9;
+  for(let d=0;d<N;d++){const{x,y}=XY[d];const dd=Math.hypot(x-sol.x,y-sol.y);sdist[d]=dd;if(dd>maxD)maxD=dd;}
   const adj=Array.from({length:N},()=>[]);
   for(let d=0;d<N;d++){const{x,y}=XY[d];
     for(const[nx,ny] of [[x+1,y],[x,y+1]]){ if(nx>=SIDE||ny>=SIDE) continue;
       const nd=D[ny*SIDE+nx], lo=Math.min(d,nd), hi=Math.max(d,nd);
-      if((fnv(seed+'|lane|'+lo+'-'+hi)%100000)/100000<p){adj[d].push(nd);adj[nd].push(d);} }}
+      const t=((sdist[d]+sdist[nd])/2)/maxD; let pe=p*(1+bias*(0.5-t)); if(pe<0)pe=0; else if(pe>1)pe=1;
+      if((fnv(seed+'|lane|'+lo+'-'+hi)%100000)/100000<pe){adj[d].push(nd);adj[nd].push(d);} }}
   if(useWh){const w=mulberry32(fnv(seed+'|wormholes'));const set=new Set();let made=0,g=0;
     while(made<whN&&g++<whN*60){const a=(w()*N)|0,b=(w()*N)|0;if(a===b)continue;
       const A=XY[a],B=XY[b];if(Math.hypot(A.x-B.x,A.y-B.y)<SIDE*0.45)continue;
@@ -397,11 +424,11 @@ el('findSeed').addEventListener('click',()=>{
 
 // ---------- wire controls ----------
 const sync=()=>{el('starV').textContent=(C.star.value/100).toFixed(2);el('pV').textContent=(C.p.value/100).toFixed(2);
-  el('whV').textContent=C.wh.value;};
+  el('biasV').textContent=(C.bias.value/100).toFixed(2);el('whV').textContent=C.wh.value;};
 for(const k in C){const node=C[k];const ev=(node.type==='range'||node.type==='text')?'input':'change';
   node.addEventListener(ev,()=>{sync();
     // generation-affecting controls rebuild; pure view toggles just redraw
-    if(['showBlocked','colorComp','regionTint','whOn'].includes(k) && node.type!=='range') draw();
+    if(['showBlocked','colorComp','regionTint','whOn','gradOn'].includes(k) && node.type!=='range') draw();
     else build();
   });}
 sync(); build();
