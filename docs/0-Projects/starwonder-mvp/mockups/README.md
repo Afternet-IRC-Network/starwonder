@@ -1,13 +1,18 @@
 # Star View — art-direction mockups
 
-Three takes on the **home screen** (the "Star view"), all showing the same content so we're
+Takes on the **home screen** (the "Star view"), all showing the same content so we're
 comparing *style*, not layout. Self-contained HTML — just open in a browser:
 
 ```
 docs/0-Projects/starwonder-mvp/mockups/a-phosphor-terminal.html
 docs/0-Projects/starwonder-mvp/mockups/b-modern-ascii.html
 docs/0-Projects/starwonder-mvp/mockups/c-pixel-voxel.html
+docs/0-Projects/starwonder-mvp/mockups/d-modern-voxel.html   ← ✅ CHOSEN DIRECTION
 ```
+
+> **Decision:** go with **D** — the modern app chrome of **B** + the procedural
+> pixel/voxel art of **C** for planets, ships, and stations. A/B/C are kept below as the
+> exploration that led there.
 
 (Resize the window narrow, or open dev-tools device mode, to see the phone framing.)
 
@@ -41,14 +46,25 @@ Canvas-rendered **pixel-art** planet (low-res sphere + palette ramp + dithering)
 - **Cons:** furthest from the ASCII brief; pixel art is easy to do badly; more art direction
   needed to stay coherent across 1000 procedurally-generated bodies.
 
-## Things to decide
-1. **Which base** — or a blend (e.g. B's app chrome with A's pure-mono toggle as a theme)?
-2. **ASCII vs pixel for the procedural planet engine** specifically — these can differ from
-   the UI chrome. (We could ship ASCII planets in a modern-chrome app, for instance.)
-3. **Color discipline** — how much color, and does color always *mean* something
-   (buy=green, sell=gold, hostile=red) vs. decorative?
-4. **The dark/explored map** — fog-of-war: unexplored = near-black, explored = lit. Worth a
-   dedicated Map mockup next.
+## D — Modern chrome + Voxel art  ← ✅ chosen
+B's app chrome with **canvas-rendered pixel/voxel** art instead of ASCII:
+- **Planet:** low-res sphere, seeded terrain bands, palette-by-type (ocean/lava/ice/arid),
+  2×2 Bayer dithering, fixed-light shading — and it **slowly rotates** (terrain spins in
+  longitude while the light stays put, so the terminator behaves correctly).
+- **Ships & stations:** mirror-symmetric procedural pixel sprites, seeded per entity, hue by
+  faction/role (teal station, red pirate, green friendly trader). One drifts across orbit.
+- Everything is generated from the seed → 1000 unique-but-stable bodies & a sprite per ship
+  for free.
+
+## Still to decide / do next
+1. **Voxel fidelity** — keep this flat-shaded pixel look, or push toward true isometric
+   voxels (chunkier, more 3D) for hero objects like your own ship?
+2. **Color discipline** — color always *means* something (buy=green, sell=gold, hostile=red)
+   vs. decorative. (Leaning: always meaningful.)
+3. **Planet-type palettes** — current set is ocean/lava/ice/arid; expand + tie to the star's
+   seed so a sector's world is deterministic.
+4. **The dark/explored map** — fog-of-war: unexplored = near-black, explored = lit. The
+   showpiece screen; deserves its own mockup next, in the D style.
 
 > ⚠️ **Original art only.** All glyphs/layouts here are ours; we deliberately avoid copying
 > any existing game's screens, names, or art. The procedural engine helps — our planets are

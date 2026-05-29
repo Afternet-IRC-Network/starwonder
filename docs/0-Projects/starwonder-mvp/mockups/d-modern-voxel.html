@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>StarWonder — Star View — D: Modern chrome + Voxel art</title>
+<style>
+  :root{
+    --bg:#0a0f1a; --panel:#111827; --panel2:#0d1422; --line:#1f2a3d;
+    --fg:#cdd9ee; --muted:#5d6b85; --accent:#5ad1c9; --accent2:#8a7bff;
+    --gold:#e8b54a; --bad:#ff6b81; --good:#5ad17a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#05080f;color:var(--fg);
+    font-family:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;}
+  .mono{font-family:"DejaVu Sans Mono",Menlo,Consolas,monospace;}
+  body{display:flex;justify-content:center;min-height:100vh;}
+  .phone{width:100%;max-width:420px;min-height:100vh;background:
+    radial-gradient(120% 80% at 50% -10%,#13203a 0,var(--bg) 55%);
+    position:relative;overflow:hidden;padding-bottom:118px;}
+  header{padding:14px 16px 8px;}
+  .loc{font-size:17px;font-weight:700;letter-spacing:.5px;}
+  .addr{font-size:11px;color:var(--muted);margin-top:2px;letter-spacing:.5px;}
+  .energy{margin-top:10px;display:flex;align-items:center;gap:8px;font-size:12px;}
+  .track{flex:1;height:7px;border-radius:4px;background:#0c1424;overflow:hidden;border:1px solid var(--line);}
+  .fill{height:100%;width:75%;background:linear-gradient(90deg,var(--accent),var(--accent2));}
+  .viewport{position:relative;margin:6px 14px 2px;border:1px solid var(--line);border-radius:14px;
+    background:radial-gradient(60% 60% at 50% 42%,#0e1730,#080c16);overflow:hidden;height:230px;}
+  .stars{position:absolute;inset:0;opacity:.55;}
+  canvas#planet{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);
+    width:180px;height:180px;image-rendering:pixelated;
+    filter:drop-shadow(0 0 14px rgba(90,160,200,.45));}
+  /* a tiny voxel ship drifting across orbit */
+  canvas#orbiter{position:absolute;width:34px;height:34px;image-rendering:pixelated;
+    left:64%;top:30%;filter:drop-shadow(0 0 5px #000);}
+  .ptype{position:absolute;left:0;right:0;bottom:8px;text-align:center;color:var(--muted);font-size:11px;}
+  .sec{padding:6px 16px;}
+  .label{font-size:10px;color:var(--muted);letter-spacing:2.5px;text-transform:uppercase;margin:10px 0 6px;}
+  .card{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);
+    border-radius:11px;padding:10px 12px;margin:6px 0;}
+  .ic{width:34px;height:34px;border-radius:8px;display:grid;place-items:center;
+    background:#0c1424;border:1px solid var(--line);overflow:hidden;}
+  .ic canvas{width:30px;height:30px;image-rendering:pixelated;}
+  .t{flex:1;} .t b{font-size:14px;} .t .s{font-size:11px;color:var(--muted);}
+  .pill{font-size:10px;padding:2px 7px;border-radius:20px;border:1px solid var(--line);}
+  .pill.buy{color:var(--good);border-color:#214a31;} .pill.sell{color:var(--gold);border-color:#5a4a1e;}
+  .pill.hostile{color:var(--bad);border-color:#5a2030;}
+  .lanes{display:flex;gap:8px;overflow-x:auto;padding:2px 16px 4px;}
+  .lane{min-width:108px;background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:10px;}
+  .lane .n{font-weight:700;font-size:13px;} .lane .d{font-size:10px;color:var(--muted);margin-top:3px;}
+  .lane.unknown{border-style:dashed;color:var(--muted);} .lane.unknown .n{color:var(--muted);}
+  .lane.wh{border-color:#5a4a1e;background:#161226;} .lane.wh .n{color:var(--gold);}
+  .actions{position:fixed;left:50%;transform:translateX(-50%);bottom:58px;width:100%;max-width:420px;
+    display:flex;gap:8px;padding:8px 14px;}
+  .btn{flex:1;text-align:center;border-radius:11px;padding:12px 0;font-size:13px;font-weight:700;
+    background:var(--panel);border:1px solid var(--line);color:var(--fg);}
+  .btn.primary{background:linear-gradient(90deg,var(--accent),var(--accent2));color:#06121a;border:none;}
+  nav{position:fixed;left:50%;transform:translateX(-50%);bottom:0;width:100%;max-width:420px;
+    display:flex;background:#070b14;border-top:1px solid var(--line);}
+  nav a{flex:1;text-align:center;padding:9px 0 11px;font-size:10px;color:var(--muted);text-decoration:none;}
+  nav a .g{display:block;font-size:17px;margin-bottom:2px;}
+  nav a.on{color:var(--accent);}
+</style>
+</head>
+<body>
+<div class="phone">
+  <header>
+    <div class="loc">Vesper Anchorage</div>
+    <div class="addr mono">R7 · S3 · #412 &nbsp;•&nbsp; TRADE SYSTEM</div>
+    <div class="energy">
+      <span>⚡</span><div class="track"><div class="fill"></div></div><span class="mono">18 / 24</span>
+    </div>
+  </header>
+
+  <div class="viewport">
+    <canvas class="stars" id="stars" width="420" height="230"></canvas>
+    <canvas id="planet" width="72" height="72"></canvas>
+    <canvas id="orbiter" width="20" height="20"></canvas>
+    <div class="ptype" id="ptype"></div>
+  </div>
+
+  <div class="sec">
+    <div class="label">In orbit</div>
+    <div class="card">
+      <div class="ic"><canvas id="spr-station" width="20" height="20"></canvas></div>
+      <div class="t"><b>Vesper Dock</b><div class="s">trade station · Traders' Guild</div></div>
+      <span class="pill buy">buy ORG</span><span class="pill sell">sell FUEL</span>
+    </div>
+
+    <div class="label">Also here</div>
+    <div class="card">
+      <div class="ic"><canvas id="spr-pirate" width="20" height="20"></canvas></div>
+      <div class="t"><b>Corsair raider</b><div class="s">NPC pirate</div></div>
+      <span class="pill hostile">hostile</span>
+    </div>
+    <div class="card">
+      <div class="ic"><canvas id="spr-trader" width="20" height="20"></canvas></div>
+      <div class="t"><b>trader jax</b><div class="s">idle · friendly</div></div>
+    </div>
+  </div>
+
+  <div class="label" style="padding-left:16px">Warp lanes</div>
+  <div class="lanes">
+    <div class="lane"><div class="n">Dunmoor</div><div class="d mono">#411 · 1⚡</div></div>
+    <div class="lane"><div class="n">Halcyon Gate</div><div class="d mono">#418 · 1⚡</div></div>
+    <div class="lane unknown"><div class="n">??? </div><div class="d mono">#407 · unexplored</div></div>
+    <div class="lane wh"><div class="n">◌ Wormhole</div><div class="d mono">→ R2·S9 · 3⚡</div></div>
+  </div>
+
+  <div class="actions">
+    <div class="btn primary">Dock</div>
+    <div class="btn">Scan</div>
+    <div class="btn">Move</div>
+  </div>
+  <nav>
+    <a class="on"><span class="g">◉</span>Star</a>
+    <a><span class="g">◇</span>Map</a>
+    <a><span class="g">▣</span>Dock</a>
+    <a><span class="g">△</span>Ship</a>
+    <a><span class="g">≡</span>Log</a>
+  </nav>
+</div>
+
+<script>
+function hashStr(s){let h=2166136261>>>0;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+
+// ---------- procedural VOXEL/PIXEL PLANET (rotating) ----------
+// seed -> palette + terrain bands. lighting fixed in view space; terrain rotates in longitude.
+const PALETTES = {
+  ocean: [[16,34,86],[24,64,140],[36,120,168],[58,158,150],[120,180,110],[210,216,190]],
+  lava:  [[40,12,12],[96,22,18],[170,52,24],[224,110,36],[250,196,90],[255,238,170]],
+  ice:   [[24,40,70],[44,78,120],[96,150,190],[150,200,224],[210,232,244],[245,250,255]],
+  arid:  [[48,30,18],[96,60,30],[150,100,52],[196,150,86],[222,190,130],[244,228,186]],
+};
+function makePlanet(canvas, seedStr, type){
+  const rng=mulberry32(hashStr(seedStr+"|planet"));
+  const N=canvas.width, ctx=canvas.getContext('2d'), R=N/2-1, cx=N/2, cy=N/2;
+  const pal=PALETTES[type]||PALETTES.ocean;
+  const bands=[]; for(let i=0;i<4;i++) bands.push({fx:1+rng()*4, fy:1+rng()*4, ph:rng()*6.283, a:.5+rng()});
+  const bayer=[[0,2],[3,1]];
+  const lx=-0.55,ly=-0.5,lz=0.66;
+  function frame(spin){
+    const img=ctx.createImageData(N,N);
+    for(let py=0;py<N;py++)for(let px=0;px<N;px++){
+      const x=(px-cx)/R, y=(py-cy)/R, r2=x*x+y*y, idx=(py*N+px)*4;
+      if(r2>1){img.data[idx+3]=0;continue;}
+      const z=Math.sqrt(1-r2);
+      const lat=Math.asin(Math.max(-1,Math.min(1,y)));
+      const lon=Math.atan2(x,z)+spin;            // rotation happens here
+      let t=0,amp=0; for(const b of bands){t+=b.a*Math.sin(b.fx*lon+b.fy*lat+b.ph);amp+=b.a;}
+      t=(t/amp+1)/2;
+      let L=Math.max(.06, x*lx+y*ly+z*lz);
+      let f=t*(pal.length-1)*0.72 + L*(pal.length-1)*0.55 + (bayer[py&1][px&1]/4-.5);
+      let pi=Math.max(0,Math.min(pal.length-1,Math.round(f)));
+      let [r,g,bl]=pal[pi]; const lit=0.4+L*0.8;
+      img.data[idx]=Math.min(255,r*lit);img.data[idx+1]=Math.min(255,g*lit);img.data[idx+2]=Math.min(255,bl*lit);img.data[idx+3]=255;
+    }
+    ctx.putImageData(img,0,0);
+  }
+  return frame;
+}
+
+// ---------- procedural VOXEL SHIP / STATION sprite (mirror-symmetric) ----------
+function makeSprite(canvas, seedStr, hue){
+  const rng=mulberry32(hashStr(seedStr+"|ship"));
+  const N=canvas.width, ctx=canvas.getContext('2d'), half=Math.ceil(N/2);
+  ctx.clearRect(0,0,N,N);
+  const cols=[`hsl(${hue} 45% 32%)`,`hsl(${hue} 50% 48%)`,`hsl(${hue} 60% 66%)`,`hsl(${(hue+30)%360} 70% 70%)`];
+  // build a symmetric body mask
+  for(let y=2;y<N-2;y++){
+    // taper: narrower at top & bottom
+    const edge = 1 + Math.floor(Math.abs(y-(N/2))/2);
+    for(let x=edge;x<half;x++){
+      const on = rng() > 0.32 + (x/half)*0.25;
+      if(!on) continue;
+      // shade: brighter toward center column (a faux-3D bevel)
+      let ci = x<half-2 ? 1 : 0;
+      if(x===0||x===1) ci=2;
+      if(rng()<0.10) ci=3; // accent lights
+      ctx.fillStyle=cols[ci];
+      ctx.fillRect(x,y,1,1);
+      ctx.fillRect(N-1-x,y,1,1); // mirror
+    }
+  }
+}
+
+// wire it up
+const ptype="ocean";
+const spin = makePlanet(document.getElementById('planet'), "R7·S3·#412", ptype);
+document.getElementById('ptype').textContent="LETHE — ocean world · 0.9g · breathable";
+let th=0; (function loop(){ spin(th); th+=0.0045; requestAnimationFrame(loop); })();
+
+makeSprite(document.getElementById('orbiter'),    "vesper-trader-2", 190);
+makeSprite(document.getElementById('spr-station'),"vesper-dock",     185);
+makeSprite(document.getElementById('spr-pirate'), "corsair-raider",  352);
+makeSprite(document.getElementById('spr-trader'), "trader-jax",      140);
+
+// faint starfield
+const c=document.getElementById('stars'),x=c.getContext('2d');
+const r=mulberry32(7);for(let i=0;i<110;i++){x.globalAlpha=.2+r()*.7;x.fillStyle="#bcd6ff";x.fillRect(r()*420|0,r()*230|0,r()<.08?2:1,1);}
+</script>
+</body>
+</html>
