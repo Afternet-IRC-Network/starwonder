@@ -26,4 +26,15 @@ export interface MeResponse {
   energy: number;
   energyCap: number;
   currentSector: number;
+  isAdmin: boolean;
+  universeExists: boolean;
 }
+
+export const bigBangInput = z.object({
+  seed: z.string().min(1).max(64),
+  inhabitedProb: z.number().min(0).max(1),
+  laneP: z.number().min(0).max(1),
+  coreBias: z.number().min(0).max(1),
+  wormholeCount: z.number().int().min(0).max(100),
+});
+export type BigBangInput = z.infer<typeof bigBangInput>;

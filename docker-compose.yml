@@ -10,6 +10,7 @@ services:
       GATE_PASSWORD: ${GATE_PASSWORD:-afternet}
       SESSION_SECRET: ${SESSION_SECRET:-please-change-me}
       DEFAULT_SEED: ${DEFAULT_SEED:-aurora}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     volumes:
       - starwonder-data:/app/data
     restart: unless-stopped

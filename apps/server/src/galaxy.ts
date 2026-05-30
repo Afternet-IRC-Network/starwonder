@@ -6,7 +6,6 @@ import {
   type GalaxySettings,
 } from '@starwonder/game-core';
 import { db, schema } from './db';
-import { env } from './env';
 
 export interface ActiveUniverse {
   id: number;
@@ -17,27 +16,23 @@ export interface ActiveUniverse {
 
 let cache: ActiveUniverse | null = null;
 
-// The active universe and its computed galaxy, memoised in-process. (The galaxy is a
-// pure function of the seed+settings, so this is just a perf cache.)
-export function getActiveUniverse(): ActiveUniverse {
+// Returns null if no active universe exists — the admin must run Big Bang first.
+export function getActiveUniverse(): ActiveUniverse | null {
   if (cache) return cache;
 
-  let row = db
+  const row = db
     .select()
     .from(schema.universes)
     .where(eq(schema.universes.status, 'active'))
     .get();
 
-  if (!row) {
-    const settings = withDefaults(env.DEFAULT_SEED);
-    row = db
-      .insert(schema.universes)
-      .values({ seed: settings.seed, settings, status: 'active', createdAt: Date.now() })
-      .returning()
-      .get();
-  }
+  if (!row) return null;
 
   const settings = row.settings as GalaxySettings;
   cache = { id: row.id, seed: row.seed, settings, galaxy: generateGalaxy(settings) };
   return cache;
+}
+
+export function invalidateUniverseCache(): void {
+  cache = null;
 }

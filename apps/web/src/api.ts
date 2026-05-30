@@ -1,4 +1,7 @@
-import type { MeResponse } from '@starwonder/shared';
+import type { MeResponse, BigBangInput } from '@starwonder/shared';
+import type { PlanetData, StationData } from '@starwonder/game-core';
+
+export type { PlanetData, StationData };
 
 export interface SectorView {
   id: number;
@@ -14,6 +17,14 @@ export interface SectorView {
   jumpsFromSol: number;
   neighbors: number[];
   wormholes: number[];
+  // Procedural content (present when inhabited)
+  planet?: PlanetData;
+  station?: StationData;
+  // DB overlay fields
+  name?: string;
+  systemName?: string;
+  type?: string;
+  special?: boolean;
 }
 
 export interface UniverseInfo {
@@ -51,4 +62,5 @@ export const api = {
   universe: () => fetch('/api/universe').then(json<UniverseInfo>),
   sector: (id: number) => fetch(`/api/sector/${id}`).then(json<SectorView>),
   map: () => fetch('/api/map').then(json<{ sectors: SectorView[] }>),
+  bigBang: (b: BigBangInput) => post('/api/admin/big-bang', b).then(json<UniverseInfo>),
 };

@@ -5,6 +5,7 @@ import { registerInput, loginInput, type MeResponse } from '@starwonder/shared';
 import { currentEnergy, DEFAULT_ENERGY } from '@starwonder/game-core';
 import { db, schema } from '../db';
 import { env } from '../env';
+import { getActiveUniverse } from '../galaxy';
 
 const COOKIE = 'sw_session';
 
@@ -14,7 +15,7 @@ function setSession(app: FastifyInstance, reply: FastifyReply, playerId: number)
     httpOnly: true,
     sameSite: 'lax',
     path: '/',
-    secure: env.NODE_ENV === 'production',
+    secure: env.COOKIE_SECURE,
     maxAge: 60 * 60 * 24 * 30,
   });
 }
@@ -37,6 +38,8 @@ function meFor(playerId: number): MeResponse | null {
     energy: e.value,
     energyCap: DEFAULT_ENERGY.cap,
     currentSector: p.currentSector,
+    isAdmin: p.id === 1,
+    universeExists: getActiveUniverse() !== null,
   };
 }
 

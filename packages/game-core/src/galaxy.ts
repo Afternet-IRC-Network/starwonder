@@ -50,6 +50,7 @@ export function generateGalaxy(settings: GalaxySettings): Galaxy {
   for (let d = 0; d < N; d++) {
     inhabited[d] = unit(`${seed}|star|${d}`) < inhabitedProb ? 1 : 0;
   }
+  inhabited[0] = 1; // Sol is always a star
 
   // Core bias: tilt the open prob by the lane's mean distance from Sol — denser core,
   // rougher rim — centred at t=0.5 so the galaxy-wide mean stays ≈ laneP.

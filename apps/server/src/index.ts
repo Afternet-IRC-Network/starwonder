@@ -8,6 +8,7 @@ import { ZodError } from 'zod';
 import { env } from './env';
 import { authRoutes } from './routes/auth';
 import { gameRoutes } from './routes/game';
+import { adminRoutes } from './routes/admin';
 import { getActiveUniverse } from './galaxy';
 
 const app = Fastify({ logger: true });
@@ -29,6 +30,7 @@ app.setErrorHandler((err: Error & { statusCode?: number }, req, reply) => {
 app.get('/api/health', async () => ({ ok: true }));
 await app.register(authRoutes);
 await app.register(gameRoutes);
+await app.register(adminRoutes);
 
 // In production the server also serves the built Vue app. In dev, Vite serves the
 // frontend and proxies /api here, so this block is simply skipped.
@@ -41,8 +43,11 @@ if (existsSync(webDist)) {
   });
 }
 
-// Ensure an active universe exists (and warm the galaxy cache) before accepting traffic.
 const u = getActiveUniverse();
-app.log.info(`universe #${u.id} "${u.seed}" — ${u.galaxy.reachable}/1024 sectors reachable`);
+if (u) {
+  app.log.info(`universe #${u.id} "${u.seed}" — ${u.galaxy.reachable}/1024 sectors reachable`);
+} else {
+  app.log.info('no active universe — admin must run Big Bang to create one');
+}
 
 await app.listen({ port: env.PORT, host: '0.0.0.0' });
