@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>StarWonder — Player Map — ③ Voxel Starfield + sector panel</title>
+<style>
+  :root{
+    --bg:#0a0f1a; --panel:#111827; --panel2:#0d1422; --line:#1f2a3d;
+    --fg:#cdd9ee; --muted:#5d6b85; --accent:#5ad1c9; --accent2:#8a7bff;
+    --gold:#e8b54a; --bad:#ff6b81; --good:#5ad17a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#05080f;color:var(--fg);
+    font-family:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;}
+  .mono{font-family:"DejaVu Sans Mono",Menlo,Consolas,monospace;}
+  body{display:flex;justify-content:center;min-height:100vh;}
+  .phone{width:100%;max-width:420px;min-height:100vh;background:
+    radial-gradient(120% 80% at 50% -10%,#13203a 0,var(--bg) 55%);
+    position:relative;overflow:hidden;padding-bottom:60px;}
+  header{padding:14px 16px 6px;}
+  .loc{font-size:17px;font-weight:700;letter-spacing:.5px;}
+  .addr{font-size:11px;color:var(--muted);margin-top:2px;letter-spacing:.5px;}
+  .reset{float:right;color:var(--muted);font-size:11px;cursor:pointer;text-decoration:underline;}
+  .viewport{position:relative;margin:8px 14px 0;border:1px solid var(--line);border-radius:14px;
+    background:radial-gradient(70% 70% at 50% 45%,#0e1730,#070b14);overflow:hidden;height:268px;}
+  canvas#sky{position:absolute;inset:0;width:100%;height:100%;cursor:grab;touch-action:none;}
+  canvas#sky.grabbing{cursor:grabbing;}
+  .hint{position:absolute;left:0;right:0;bottom:6px;text-align:center;color:var(--muted);font-size:10px;pointer-events:none;}
+
+  /* ── light sector panel ───────────────────────────────── */
+  .panel{margin:10px 14px 0;background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:12px;min-height:150px;}
+  .phead{display:flex;gap:12px;align-items:center;}
+  .part{position:relative;width:72px;height:72px;flex:0 0 72px;}
+  .part canvas.pl{position:absolute;inset:0;width:72px;height:72px;image-rendering:pixelated;
+    filter:drop-shadow(0 0 10px rgba(90,160,200,.45));}
+  .part canvas.wh{position:absolute;right:-4px;top:-4px;width:26px;height:26px;image-rendering:pixelated;
+    filter:drop-shadow(0 0 4px rgba(120,180,220,.6));}
+  .pinfo{flex:1;min-width:0;}
+  .pname{font-size:17px;font-weight:700;}
+  .psub{font-size:11px;color:var(--muted);margin-top:2px;}
+  .pstats{font-size:12px;margin-top:5px;}
+  .pblurb{font-size:11px;color:var(--muted);font-style:italic;margin-top:3px;}
+  .prow{display:flex;align-items:center;gap:10px;margin-top:11px;padding-top:11px;border-top:1px solid var(--line);}
+  .picon{width:34px;height:34px;border-radius:8px;display:grid;place-items:center;background:#0c1424;border:1px solid var(--line);overflow:hidden;}
+  .picon canvas{width:30px;height:30px;image-rendering:pixelated;}
+  .pt{flex:1;} .pt b{font-size:13px;} .pt .s{font-size:11px;color:var(--muted);}
+  .pill{font-size:10px;padding:2px 7px;border-radius:20px;border:1px solid var(--line);margin-left:4px;}
+  .pill.buy{color:var(--good);border-color:#214a31;} .pill.sell{color:var(--gold);border-color:#5a4a1e;}
+  .plane{font-size:11px;color:var(--muted);margin-top:10px;padding-top:9px;border-top:1px solid var(--line);line-height:1.7;}
+  .plane .wh{color:var(--gold);}
+  .pempty{color:var(--muted);font-size:12px;padding:20px 4px;text-align:center;}
+
+  .legend{display:flex;flex-wrap:wrap;gap:6px 12px;padding:8px 16px 0;font-size:10px;color:var(--muted);}
+  .legend span{display:flex;align-items:center;gap:5px;}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;}
+  nav{position:fixed;left:50%;transform:translateX(-50%);bottom:0;width:100%;max-width:420px;
+    display:flex;background:#070b14;border-top:1px solid var(--line);}
+  nav a{flex:1;text-align:center;padding:9px 0 11px;font-size:10px;color:var(--muted);text-decoration:none;}
+  nav a .g{display:block;font-size:17px;margin-bottom:2px;}
+  nav a.on{color:var(--accent);}
+</style>
+</head>
+<body>
+<div class="phone">
+  <header>
+    <span class="reset" id="reset">↺ reset fog</span>
+    <div class="loc">Star Chart</div>
+    <div class="addr mono" id="addr">explored space · true positions</div>
+  </header>
+  <div class="viewport">
+    <canvas id="sky"></canvas>
+    <div class="hint">drag to pan · scroll to zoom · tap a world to inspect · tap a <span style="color:var(--muted)">?</span> to fly</div>
+  </div>
+  <div class="panel" id="panel"></div>
+  <div class="legend">
+    <span><i class="dot" style="background:var(--good)"></i> you</span>
+    <span>🪐 charted world (colour = class)</span>
+    <span><i class="dot" style="background:#2c3c58"></i> waypoint</span>
+    <span><i class="dot" style="background:var(--gold)"></i> wormhole</span>
+    <span><i class="dot" style="border:1px dashed var(--muted);background:transparent"></i> unscanned</span>
+  </div>
+  <nav>
+    <a><span class="g">◉</span>Star</a>
+    <a class="on"><span class="g">◇</span>Map</a>
+    <a><span class="g">▣</span>Dock</a>
+    <a><span class="g">△</span>Ship</a>
+    <a><span class="g">≡</span>Log</a>
+  </nav>
+</div>
+
+<script>
+// ============ shared procedural galaxy engine (aurora seed, admin defaults) ============
+const SIDE=32, N=SIDE*SIDE;
+function fnv(s){let h=2166136261>>>0;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}
+  h^=h>>>16;h=Math.imul(h,0x85ebca6b);h^=h>>>13;h=Math.imul(h,0xc2b2ae35);h^=h>>>16;return h>>>0;}
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function d2xy(n,d){let rx,ry,t=d,x=0,y=0;for(let s=1;s<n;s*=2){rx=1&(t/2);ry=1&(t^rx);
+  if(ry===0){if(rx===1){x=s-1-x;y=s-1-y;}const tmp=x;x=y;y=tmp;}x+=s*rx;y+=s*ry;t=Math.floor(t/4);}return[x,y];}
+const XY=new Array(N), D=new Int32Array(N);
+(function pinwheel(){const H=SIDE/2;
+  const place=[(lx,ly)=>[H+lx,H+ly],(lx,ly)=>[H-1-lx,H+ly],(lx,ly)=>[H-1-lx,H-1-ly],(lx,ly)=>[H+lx,H-1-ly]];
+  for(let d=0;d<N;d++){const q=d>>8,local=d&255,[lx,ly]=d2xy(H,local),[x,y]=place[q](lx,ly);XY[d]={x,y};D[y*SIDE+x]=d;}})();
+const SEED='aurora', starProb=0.47, P=0.44, BIAS=0.89, WHN=50;
+const sol=XY[0]; const sdist=new Float64Array(N); let maxD=1e-9;
+for(let d=0;d<N;d++){const{x,y}=XY[d];const dd=Math.hypot(x-sol.x,y-sol.y);sdist[d]=dd;if(dd>maxD)maxD=dd;}
+const hasStar=new Uint8Array(N);
+for(let d=0;d<N;d++) hasStar[d]=(fnv(SEED+'|star|'+d)%100000)/100000<starProb?1:0; hasStar[0]=1;
+const laneAdj=Array.from({length:N},()=>[]);
+for(let d=0;d<N;d++){const{x,y}=XY[d];
+  for(const[nx,ny] of [[x+1,y],[x,y+1]]){ if(nx>=SIDE||ny>=SIDE) continue;
+    const nd=D[ny*SIDE+nx], lo=Math.min(d,nd), hi=Math.max(d,nd);
+    const t=((sdist[d]+sdist[nd])/2)/maxD; let pe=P*(1+BIAS*(0.5-t)); pe=Math.max(0,Math.min(1,pe));
+    if((fnv(SEED+'|lane|'+lo+'-'+hi)%100000)/100000<pe){laneAdj[d].push(nd);laneAdj[nd].push(d);} }}
+const wprng=mulberry32(fnv(SEED+'|wormholes')); const wormholes=[]; const whSet=new Set(); const minDist=SIDE*0.45;
+let guard=0; while(wormholes.length<WHN && guard++<WHN*60){
+  const a=(wprng()*N)|0,b=(wprng()*N)|0; if(a===b) continue;
+  const A=XY[a],B=XY[b]; if(Math.hypot(A.x-B.x,A.y-B.y)<minDist) continue;
+  const key=Math.min(a,b)+'-'+Math.max(a,b); if(whSet.has(key)) continue; whSet.add(key); wormholes.push({a,b});}
+const whBySector=new Map();
+for(const w of wormholes){ if(!whBySector.has(w.a))whBySector.set(w.a,[]); if(!whBySector.has(w.b))whBySector.set(w.b,[]);
+  whBySector.get(w.a).push(w); whBySector.get(w.b).push(w);}
+const SYL=['ve','dun','hal','le','xan','tor','cy','ra','mor','el','os','ari','bel','no','qui','tha','vor','sel','dra','ix','en','ka','lo','ti','sur','mi'];
+function sysName(d){if(d===0)return'Sol';const r=mulberry32(fnv(SEED+'|name|'+d));const n=2+((r()*2)|0);let s='';for(let i=0;i<n;i++)s+=SYL[(r()*SYL.length)|0];return s[0].toUpperCase()+s.slice(1);}
+function addrOf(d){return 'R'+((d>>6)+1)+' · #'+d;}
+
+// world class → palette + label + derived stats
+const PALETTES={
+ terran:[[20,40,30],[28,72,52],[60,120,70],[120,165,90],[180,200,140],[225,235,210]],
+ ocean: [[16,34,86],[24,64,140],[36,120,168],[58,158,150],[120,180,110],[210,216,190]],
+ arid:  [[48,30,18],[96,60,30],[150,100,52],[196,150,86],[222,190,130],[244,228,186]],
+ ice:   [[24,40,70],[44,78,120],[96,150,190],[150,200,224],[210,232,244],[245,250,255]],
+ lava:  [[40,12,12],[96,22,18],[170,52,24],[224,110,36],[250,196,90],[255,238,170]],
+ barren:[[28,28,32],[60,60,68],[96,96,104],[140,140,150],[185,185,196],[225,225,235]],
+ gas:   [[40,28,60],[78,52,110],[126,92,150],[176,150,120],[214,196,150],[240,230,200]],
+};
+const CLASS=[['Terran','terran'],['Ocean','ocean'],['Desert','arid'],['Ice','ice'],['Lava','lava'],['Barren','barren'],['Gas giant','gas']];
+function sysClass(d){if(d===0)return ['Terran','terran'];const r=mulberry32(fnv(SEED+'|class|'+d));return CLASS[(r()*CLASS.length)|0];}
+function classGlow(d){const pal=PALETTES[sysClass(d)[1]]; const c=pal[3]; return 'rgb('+c[0]+','+c[1]+','+c[2]+')';}
+const ATMO={terran:'breathable',ocean:'breathable',arid:'thin',ice:'thin',lava:'toxic',barren:'none',gas:'crushing'};
+const BLURB={terran:'temperate, life-bearing continents',ocean:'world-spanning seas',arid:'parched dunes & canyons',
+  ice:'frozen, permafrost plains',lava:'molten, volcanic crust',barren:'airless, cratered rock',gas:'banded gas titan · no surface'};
+function worldInfo(d){
+  const cl=sysClass(d), key=cl[1], r=mulberry32(fnv(SEED+'|world|'+d));
+  const diam = key==='gas' ? 60000+((r()*80000)|0) : 3000+((r()*11000)|0);
+  const g = key==='gas' ? 1.4+r()*1.6 : 0.25 + diam/16000*1.3;
+  const moons = r()<0.45 ? 0 : 1+((r()*3)|0);
+  return {label:cl[0], diam, g:g.toFixed(2), atmo:ATMO[key], moons, blurb:BLURB[key]};
+}
+const COMM=['minerals','metals','food','livestock','textiles','equipment','medical','electronics'];
+const TAILS=['Dock','Station','Terminal','Anchorage','Depot','Outpost'];
+function stationOf(d){ if(!hasStar[d]) return null;
+  const r=mulberry32(fnv(SEED+'|station|'+d));
+  const name = (d===0?'Terra':sysName(d))+' '+TAILS[(r()*TAILS.length)|0];
+  let bi=(r()*COMM.length)|0, si=(r()*COMM.length)|0; if(si===bi) si=(si+1)%COMM.length;
+  return {name, buy:COMM[bi], sell:COMM[si]};
+}
+
+// cached voxel-planet sprites
+const spriteCache=new Map();
+function planetSprite(d, size){
+  const key=d+'@'+size; if(spriteCache.has(key)) return spriteCache.get(key);
+  const cv=document.createElement('canvas'); cv.width=cv.height=size;
+  const ctx=cv.getContext('2d'); const pal=PALETTES[sysClass(d)[1]];
+  const rng=mulberry32(fnv(SEED+'|'+d+'|planet')); const R=size/2-0.5, cx=size/2, cy=size/2;
+  const bands=[]; for(let i=0;i<4;i++) bands.push({fx:1+rng()*4,fy:1+rng()*4,ph:rng()*6.283,a:.5+rng()});
+  const bayer=[[0,2],[3,1]]; const lx=-0.55,ly=-0.5,lz=0.66; const spin=0.6;
+  const img=ctx.createImageData(size,size);
+  for(let py=0;py<size;py++)for(let px=0;px<size;px++){
+    const x=(px-cx)/R, y=(py-cy)/R, r2=x*x+y*y, idx=(py*size+px)*4;
+    if(r2>1){img.data[idx+3]=0;continue;}
+    const z=Math.sqrt(1-r2); const lat=Math.asin(Math.max(-1,Math.min(1,y))); const lon=Math.atan2(x,z)+spin;
+    let t=0,amp=0; for(const b of bands){t+=b.a*Math.sin(b.fx*lon+b.fy*lat+b.ph);amp+=b.a;} t=(t/amp+1)/2;
+    let L=Math.max(.06,x*lx+y*ly+z*lz);
+    let f=t*(pal.length-1)*0.72+L*(pal.length-1)*0.55+(bayer[py&1][px&1]/4-.5);
+    let pi=Math.max(0,Math.min(pal.length-1,Math.round(f))); let [r,g,bl]=pal[pi]; const lit=0.4+L*0.8;
+    img.data[idx]=Math.min(255,r*lit);img.data[idx+1]=Math.min(255,g*lit);img.data[idx+2]=Math.min(255,bl*lit);img.data[idx+3]=255;
+  }
+  ctx.putImageData(img,0,0); spriteCache.set(key,cv); return cv;
+}
+// station wheel (2001 / W3) — for the panel icon
+function hsl2rgb(h,s,l){h/=360;const a=s*Math.min(l,1-l);const f=n=>{const k=(n+h*12)%12;return l-a*Math.max(-1,Math.min(k-3,9-k,1));};return[f(0)*255,f(8)*255,f(4)*255];}
+const clampv=(v,a,b)=>Math.max(a,Math.min(b,v));
+function drawWheel(canvas){
+  const o={tilt:0.58,spokes:4,spokeOuter:0.99,spokeRot:0.4,hue:208,sat:0.15,rings:[[1.0,0.16]],spokeW:0.06,hub:0.20,lightAng:-2.2};
+  const Nn=canvas.width, ctx=canvas.getContext('2d'), img=ctx.createImageData(Nn,Nn);
+  const cx=(Nn-1)/2, cy=(Nn-1)/2, Rx=Nn*0.46, Ry=Rx*o.tilt;
+  function set(x,y,l){if(x<0||y<0||x>=Nn||y>=Nn)return;const i=(y*Nn+x)*4;const[r,g,b]=hsl2rgb(o.hue,o.sat,clampv(l,.08,.92));img.data[i]=r;img.data[i+1]=g;img.data[i+2]=b;img.data[i+3]=255;}
+  for(let y=0;y<Nn;y++)for(let x=0;x<Nn;x++){
+    const dx=x-cx,dy=y-cy,ex=dx/Rx,ey=dy/Ry,e=Math.hypot(ex,ey),ang=Math.atan2(dy,dx);
+    let drawn=false,l=0;
+    for(const [os,w] of o.rings){ if(e<=os&&e>=os-w){const depth=(dy>0)?1:0.58;const light=0.5+0.5*Math.cos(ang-o.lightAng);l=Math.max(l,0.30+0.58*light*depth);drawn=true;} }
+    if(e<o.spokeOuter&&e>0){ for(let s=0;s<o.spokes;s++){const sa=s*Math.PI*2/o.spokes+o.spokeRot;const proj=ex*Math.cos(sa)+ey*Math.sin(sa),perp=-ex*Math.sin(sa)+ey*Math.cos(sa);if(proj>0&&Math.abs(perp)<o.spokeW){l=Math.max(l,0.42);drawn=true;break;}} }
+    if(Math.hypot(ex,ey)<=o.hub){l=0.52+0.36*((cx-dx)/Nn);drawn=true;}
+    if(drawn)set(x,y,l);
+  }
+  ctx.putImageData(img,0,0);
+}
+
+// ============ fog ============
+let visited, frontier, takenWh, current, selected;
+function recomputeFrontier(){
+  frontier=new Set();
+  for(const v of visited){ for(const n of laneAdj[v]) if(!visited.has(n)) frontier.add(n);
+    for(const w of (whBySector.get(v)||[])){ const far=w.a===v?w.b:w.a; if(!visited.has(far)) frontier.add(far); }}
+}
+function initFog(){
+  const rng=mulberry32(fnv(SEED+'|demo-fog-v2')); visited=new Set([0]); takenWh=new Set(); let g2=0;
+  while(visited.size<15 && g2++<4000){ const arr=[...visited]; const from=arr[(rng()*arr.length)|0];
+    const opts=laneAdj[from].filter(n=>!visited.has(n)); if(!opts.length) continue;
+    visited.add(opts[(rng()*opts.length)|0]); }
+  for(const v of visited){ const ws=whBySector.get(v)||[]; if(ws.length){ const w=ws[0]; const far=w.a===v?w.b:w.a;
+    visited.add(far); takenWh.add(Math.min(w.a,w.b)+'-'+Math.max(w.a,w.b)); break; }}
+  current=[...visited].reduce((best,d)=> sdist[d]>sdist[best]?d:best, 0);
+  selected=current; recomputeFrontier();
+}
+
+// ============ camera ============
+// Centred on you at a fixed comfortable zoom — the bubble runs off-screen and you drag
+// to roam (rather than auto-fitting everything tiny). Scroll zooms; ↺ recentres.
+let zoom=1, panX=0, panY=0;
+const PXPER=46; // px per sector unit at zoom 1 — spacing between worlds (not sprite size)
+function baseFit(w,h){
+  const c=XY[current];
+  return {s:PXPER, ox:w/2 - c.x*PXPER, oy:h/2 - c.y*PXPER};
+}
+
+// ============ render ============
+const cv=document.getElementById('sky'), ctx=cv.getContext('2d');
+let nodeScreen=[]; let pulse=0; let starfield=null;
+function draw(){
+  const dpr=window.devicePixelRatio||1; const w=cv.clientWidth,h=cv.clientHeight;
+  cv.width=w*dpr; cv.height=h*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);
+  if(!starfield){ starfield=[]; const sr=mulberry32(77); for(let i=0;i<120;i++) starfield.push([sr(),sr(),sr()]); }
+  for(const [a,b,c] of starfield){ ctx.globalAlpha=.12+c*.45; ctx.fillStyle='#bcd6ff'; ctx.fillRect((a*w)|0,(b*h)|0,c<.1?2:1,1);} ctx.globalAlpha=1;
+  const base=baseFit(w,h);
+  const P2S=(x,y)=>{ const bx=x*base.s+base.ox, by=y*base.s+base.oy; return {x:(bx-w/2)*zoom+w/2+panX, y:(by-h/2)*zoom+h/2+panY}; };
+  const known=new Set([...visited,...frontier]);
+  // lanes
+  ctx.strokeStyle='rgba(90,209,201,.22)'; ctx.lineWidth=1.2; ctx.beginPath();
+  for(const a of known){ for(const b of laneAdj[a]){ if(b<a||!known.has(b)) continue;
+    const A=XY[a],B=XY[b],pa=P2S(A.x,A.y),pb=P2S(B.x,B.y); ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y); }}
+  ctx.stroke();
+  // taken wormholes
+  for(const w0 of wormholes){ const key=Math.min(w0.a,w0.b)+'-'+Math.max(w0.a,w0.b);
+    if(!takenWh.has(key)||!visited.has(w0.a)||!visited.has(w0.b)) continue;
+    const A=XY[w0.a],B=XY[w0.b],p1=P2S(A.x,A.y),p2=P2S(B.x,B.y),mx=(p1.x+p2.x)/2,my=(p1.y+p2.y)/2,dx=p2.x-p1.x,dy=p2.y-p1.y;
+    ctx.strokeStyle='rgba(232,181,74,.55)'; ctx.setLineDash([5,4]); ctx.lineWidth=1.4;
+    ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.quadraticCurveTo(mx-dy*0.14,my+dx*0.14,p2.x,p2.y); ctx.stroke(); ctx.setLineDash([]);
+  }
+  // nodes
+  nodeScreen=[];
+  for(const d of known){
+    const A=XY[d]; const s=P2S(A.x,A.y);
+    const vis=visited.has(d), fr=!vis&&frontier.has(d), star=hasStar[d]===1;
+    const hasWh=(whBySector.get(d)||[]).length>0; let hit=12;
+    if(fr){
+      ctx.strokeStyle='rgba(120,140,170,.6)'; ctx.setLineDash([2,3]); ctx.lineWidth=1.1;
+      ctx.beginPath(); ctx.arc(s.x,s.y,6*zoom**0.5,0,7); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle='#8a9bbd'; ctx.font='bold 11px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('?',s.x,s.y);
+    } else if(d===0){
+      glowDot(s,'rgb(232,181,74)',18*zoom**0.4);
+      const sp=planetSprite(0,26); ctx.drawImage(sp,s.x-13,s.y-13);
+      ctx.strokeStyle='rgba(232,181,74,.9)'; ctx.lineWidth=1.4; ctx.beginPath(); ctx.arc(s.x,s.y,16,0,7); ctx.stroke();
+      label(s,'Sol','#e8b54a');
+    } else if(star){
+      glowDot(s, classGlow(d), 18*zoom**0.4);
+      const sz=20; ctx.drawImage(planetSprite(d,sz),s.x-sz/2,s.y-sz/2);
+      if(hasWh){ ctx.strokeStyle='rgba(232,181,74,.8)'; ctx.lineWidth=1.2; ctx.beginPath(); ctx.arc(s.x,s.y,sz/2+3,0,7); ctx.stroke(); }
+      label(s, sysName(d), '#cdd9ee');
+    } else {
+      ctx.fillStyle='#2c3c58'; ctx.beginPath(); ctx.arc(s.x,s.y,3,0,7); ctx.fill(); hit=9;
+    }
+    if(d===selected && d!==current){
+      ctx.strokeStyle='rgba(90,209,201,.9)'; ctx.lineWidth=1.6; ctx.beginPath(); ctx.arc(s.x,s.y,14,0,7); ctx.stroke();
+    }
+    if(d===current){
+      const pr=15+Math.sin(pulse)*2.5;
+      ctx.strokeStyle='rgba(155,227,127,'+(0.75+0.25*Math.sin(pulse))+')'; ctx.lineWidth=1.8;
+      ctx.beginPath(); ctx.arc(s.x,s.y,pr,0,7); ctx.stroke();
+    }
+    nodeScreen.push({d, sx:s.x, sy:s.y, r:hit, fr});
+  }
+}
+function glowDot(s,col,r){ const g=ctx.createRadialGradient(s.x,s.y,0,s.x,s.y,r);
+  g.addColorStop(0, col.replace('rgb','rgba').replace(')',',.45)')); g.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(s.x,s.y,r,0,7); ctx.fill(); }
+function label(s,txt,col){ ctx.fillStyle=col; ctx.font='11px Inter, sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillText(txt,s.x,s.y+13); }
+
+// ============ light sector panel ============
+function renderPanel(d){
+  const el=document.getElementById('panel');
+  document.getElementById('addr').textContent=sysName(current)+' · '+addrOf(current)+' · '+visited.size+' charted';
+  if(d==null || (!visited.has(d))){ el.innerHTML='<div class="pempty">Tap a charted world to see what you know about it.</div>'; return; }
+  const wi=worldInfo(d), st=stationOf(d), isYou=d===current;
+  const lanes=laneAdj[d].map(n=>sysName(n)+(visited.has(n)?'':' <span style="color:var(--muted)">?</span>')).slice(0,6).join(', ');
+  const ws=(whBySector.get(d)||[]); let wl='';
+  for(const w of ws){ const far=w.a===d?w.b:w.a; const taken=takenWh.has(Math.min(w.a,w.b)+'-'+Math.max(w.a,w.b));
+    wl+='<div><span class="wh">◌ wormhole</span> → '+(visited.has(far)?sysName(far):'<span style="color:var(--muted)">uncharted</span>')+' · 3⚡'+(taken?'':' · exit unknown')+'</div>'; }
+  el.innerHTML =
+    '<div class="phead">'+
+      '<div class="part"><canvas class="pl" width="72" height="72"></canvas>'+(st?'<canvas class="wh" width="26" height="26"></canvas>':'')+'</div>'+
+      '<div class="pinfo">'+
+        '<div class="pname">'+(d===0?'★ ':'')+sysName(d)+(isYou?' <span style="color:var(--good);font-size:11px">· you are here</span>':'')+'</div>'+
+        '<div class="psub mono">'+addrOf(d)+' · '+(hasStar[d]?wi.label:'deep-space waypoint')+'</div>'+
+        (hasStar[d]?'<div class="pstats">'+wi.diam.toLocaleString()+' km · '+wi.g+'g · '+wi.atmo+' · '+wi.moons+' moon'+(wi.moons===1?'':'s')+'</div>'+
+          '<div class="pblurb">'+wi.blurb+'</div>':'<div class="pblurb">no planet here — a waypoint between the stars</div>')+
+      '</div>'+
+    '</div>'+
+    (st?'<div class="prow"><div class="picon"><canvas id="pwheel" width="30" height="30"></canvas></div>'+
+        '<div class="pt"><b>'+st.name+'</b><div class="s">trade station</div></div>'+
+        '<span class="pill buy">buy '+st.buy+'</span><span class="pill sell">sell '+st.sell+'</span></div>':'')+
+    '<div class="plane"><b style="color:var(--fg);font-weight:600">Lanes</b> · '+(lanes||'—')+wl+'</div>';
+  // draw the art
+  const pl=el.querySelector('canvas.pl'); if(pl) pl.getContext('2d').drawImage(planetSprite(d,72),0,0);
+  const wh=el.querySelector('canvas.wh'); if(wh) drawWheel(wh);
+  const pw=el.querySelector('#pwheel'); if(pw) drawWheel(pw);
+}
+
+// ============ interaction: drag to pan, tap to select/fly, wheel to zoom ============
+let drag=null;
+cv.addEventListener('pointerdown', e=>{ drag={x:e.clientX,y:e.clientY,px:panX,py:panY,moved:false};
+  cv.setPointerCapture(e.pointerId); cv.classList.add('grabbing'); });
+cv.addEventListener('pointermove', e=>{ if(!drag) return; const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
+  if(Math.hypot(dx,dy)>5) drag.moved=true; panX=drag.px+dx; panY=drag.py+dy; });
+cv.addEventListener('pointerup', e=>{
+  const wasDrag=drag&&drag.moved; cv.classList.remove('grabbing'); drag=null;
+  if(wasDrag) return;
+  const rect=cv.getBoundingClientRect(); const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  let best=null,bd=1e9; for(const n of nodeScreen){ const dd=Math.hypot(n.sx-mx,n.sy-my); if(dd<bd){bd=dd;best=n;} }
+  if(!best||bd>24) return;
+  if(best.fr){ visited.add(best.d); current=best.d; selected=best.d; recomputeFrontier(); }
+  else { selected=best.d; }
+  renderPanel(selected);
+});
+cv.addEventListener('wheel', e=>{ e.preventDefault(); zoom=Math.max(0.5,Math.min(3.5, zoom*Math.exp(-e.deltaY*0.0015))); }, {passive:false});
+document.getElementById('reset').addEventListener('click', ()=>{ zoom=1;panX=0;panY=0; initFog(); renderPanel(selected); });
+
+initFog(); renderPanel(selected);
+(function loop(){ pulse+=0.08; draw(); requestAnimationFrame(loop); })();
+window.addEventListener('resize', draw);
+</script>
+</body>
+</html>

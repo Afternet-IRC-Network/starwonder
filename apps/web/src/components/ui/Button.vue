@@ -1,7 +1,7 @@
 <script setup lang="ts">
 withDefaults(
   defineProps<{
-    variant?: 'primary' | 'secondary' | 'ghost';
+    variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
     disabled?: boolean;
     size?: 'sm' | 'md';
   }>(),
@@ -19,7 +19,9 @@ withDefaults(
         ? 'bg-accent/15 border border-accent text-accent hover:bg-accent/25'
         : variant === 'secondary'
           ? 'bg-panel2 border border-line text-fg hover:border-accent hover:text-accent'
-          : 'text-muted hover:text-fg underline',
+          : variant === 'danger'
+            ? 'bg-bad/15 border border-bad text-bad hover:bg-bad/25'
+            : 'text-muted hover:text-fg underline',
     ]"
   >
     <slot />

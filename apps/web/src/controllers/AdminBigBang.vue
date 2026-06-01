@@ -10,13 +10,21 @@ import ConnectivityStats from '../components/admin-big-bang/ConnectivityStats.vu
 import type { GalaxyStats } from '../components/admin-big-bang/types';
 import { api } from '../api';
 
-const emit = defineEmits<{ done: [] }>();
+const props = defineProps<{ universeExists?: boolean; embedded?: boolean }>();
+const emit = defineEmits<{ done: []; cleared: [] }>();
+
+// Two-phase when a universe already exists: you must CLEAR it before you can generate.
+// `gated` = a universe is live and hasn't been cleared yet → generation controls locked.
+const cleared = ref(false);
+const confirming = ref(false); // two-step gate on the destructive clear
+const gated = computed(() => !!props.universeExists && !cleared.value);
 
 // --- Settings ---
 const seed = ref('aurora');
 const starVal = ref(47);
 const laneVal = ref(44);
 const biasVal = ref(89);
+const habitVal = ref(35);
 const whVal = ref(50);
 const showBlocked = ref(true);
 const showWormholes = ref(true);
@@ -29,6 +37,7 @@ const galaxy = computed<Galaxy>(() =>
       inhabitedProb: starVal.value / 100,
       laneP: laneVal.value / 100,
       coreBias: biasVal.value / 100,
+      habitationFalloff: habitVal.value / 100,
       wormholeCount: whVal.value,
     }),
   ),
@@ -111,6 +120,7 @@ async function findSeed() {
         inhabitedProb: starVal.value / 100,
         laneP: laneVal.value / 100,
         coreBias: biasVal.value / 100,
+        habitationFalloff: habitVal.value / 100,
         wormholeCount: whVal.value,
       }),
     );
@@ -126,6 +136,22 @@ async function findSeed() {
 const busy = ref(false);
 const error = ref('');
 
+// Phase 1: delete the live universe (and reset players). Unlocks the generation controls.
+async function doClear() {
+  error.value = '';
+  busy.value = true;
+  try {
+    await api.clearUniverse();
+    cleared.value = true;
+    confirming.value = false;
+    emit('cleared');
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    busy.value = false;
+  }
+}
+
 async function doBigBang() {
   error.value = '';
   busy.value = true;
@@ -135,6 +161,7 @@ async function doBigBang() {
       inhabitedProb: starVal.value / 100,
       laneP: laneVal.value / 100,
       coreBias: biasVal.value / 100,
+      habitationFalloff: habitVal.value / 100,
       wormholeCount: whVal.value,
     });
     emit('done');
@@ -147,11 +174,13 @@ async function doBigBang() {
 </script>
 
 <template>
-  <div class="min-h-screen p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
+  <div :class="props.embedded ? '' : 'min-h-screen p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto'">
 
-    <!-- Header -->
-    <header class="mb-6">
-      <div class="text-[10px] font-semibold uppercase tracking-[2px] text-muted">Admin · Universe Setup</div>
+    <!-- Header (standalone page only — when embedded, the host provides chrome) -->
+    <header v-if="!props.embedded" class="mb-6">
+      <div class="flex items-center justify-between">
+        <div class="text-[10px] font-semibold uppercase tracking-[2px] text-muted">Admin · Universe Setup</div>
+      </div>
       <h1 class="text-2xl font-bold tracking-tight mt-1">The Big Bang</h1>
       <p class="text-sm text-muted mt-1.5 max-w-xl leading-relaxed">
         Tune the galaxy physics below. Aim for ≥ 90% reachable from Sol before creating the universe.
@@ -165,9 +194,43 @@ async function doBigBang() {
     -->
     <div class="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6 items-start">
 
-      <!-- Map — right on desktop (order-1), below on mobile (order-2) -->
+      <!-- Map / clear-gate — left on desktop (order-1), below on mobile (order-2) -->
       <div class="order-2 lg:order-1">
+        <!-- Phase 1: a universe is live — generation is gated behind clearing it -->
+        <div
+          v-if="gated"
+          class="aspect-square w-full border border-dashed border-line rounded-2xl bg-panel/40 grid place-items-center text-center p-8"
+        >
+          <div class="max-w-xs">
+            <div class="text-sm font-semibold mb-1">A universe is live</div>
+            <p class="text-xs text-muted leading-relaxed mb-5">
+              Clear it before generating a new one. This
+              <span class="text-bad font-medium">deletes the galaxy</span> and resets
+              <em>every</em> player to a fresh start — back to Sol, 1000 credits, full
+              energy. Handles and passwords are kept. Cannot be undone.
+            </p>
+
+            <Button v-if="!confirming" variant="danger" :disabled="busy" @click="confirming = true">
+              ⟲ Clear the world
+            </Button>
+            <div v-else class="flex flex-col gap-2">
+              <p class="text-bad text-xs font-medium">Delete the universe and reset all players?</p>
+              <div class="flex gap-2 justify-center">
+                <Button variant="danger" :disabled="busy" @click="doClear">
+                  {{ busy ? 'Clearing…' : 'Yes, delete it' }}
+                </Button>
+                <Button variant="secondary" :disabled="busy" @click="confirming = false">
+                  Cancel
+                </Button>
+              </div>
+            </div>
+            <p v-if="error" class="text-bad text-xs mt-3">{{ error }}</p>
+          </div>
+        </div>
+
+        <!-- Phase 2: no universe (or just cleared) — live preview of what we'll build -->
         <GalaxyMap
+          v-else
           :galaxy="galaxy"
           :show-blocked="showBlocked"
           :show-wormholes="showWormholes"
@@ -175,8 +238,12 @@ async function doBigBang() {
         />
       </div>
 
-      <!-- Controls column — left on desktop (order-2), top on mobile (order-1) -->
-      <div class="order-1 lg:order-2 flex flex-col gap-4">
+      <!-- Controls column — locked until the world is cleared -->
+      <div
+        class="order-1 lg:order-2 flex flex-col gap-4 transition-opacity"
+        :class="gated ? 'opacity-50 pointer-events-none select-none' : ''"
+        :aria-disabled="gated"
+      >
 
         <!-- Generation controls -->
         <Panel>
@@ -186,6 +253,7 @@ async function doBigBang() {
             v-model:star-val="starVal"
             v-model:lane-val="laneVal"
             v-model:bias-val="biasVal"
+            v-model:habit-val="habitVal"
             v-model:wh-val="whVal"
             v-model:show-blocked="showBlocked"
             v-model:show-wormholes="showWormholes"
@@ -201,19 +269,19 @@ async function doBigBang() {
           <ConnectivityStats :stats="stats" />
         </Panel>
 
-        <!-- Big Bang action -->
+        <!-- Create action -->
         <Panel>
           <p class="text-xs text-muted mb-3 leading-relaxed">
-            Creates the universe from the current settings, establishes Sol as the home system,
-            and opens the galaxy to players.
+            Creates the universe from the current settings, establishes Sol as the home
+            system, and opens the galaxy to players.
             <span v-if="stats.solPct < 90" class="text-gold">
               Connectivity is below 90% — consider using 🎲 to find a better seed.
             </span>
           </p>
-          <Button variant="primary" class="w-full" :disabled="busy" @click="doBigBang">
+          <Button variant="primary" class="w-full" :disabled="busy || gated" @click="doBigBang">
             {{ busy ? 'Creating universe…' : '✦ Create Universe' }}
           </Button>
-          <p v-if="error" class="text-bad text-xs mt-2">{{ error }}</p>
+          <p v-if="error && !gated" class="text-bad text-xs mt-2">{{ error }}</p>
         </Panel>
 
       </div>

@@ -9,7 +9,7 @@ import { env } from './env';
 import { authRoutes } from './routes/auth';
 import { gameRoutes } from './routes/game';
 import { adminRoutes } from './routes/admin';
-import { getActiveUniverse } from './galaxy';
+import { getWorld } from './galaxy';
 
 const app = Fastify({ logger: true });
 
@@ -43,9 +43,9 @@ if (existsSync(webDist)) {
   });
 }
 
-const u = getActiveUniverse();
-if (u) {
-  app.log.info(`universe #${u.id} "${u.seed}" — ${u.galaxy.reachable}/1024 sectors reachable`);
+const w = getWorld();
+if (w) {
+  app.log.info(`universe "${w.seed}" — ${w.galaxy.reachable}/${1024} sectors reachable`);
 } else {
   app.log.info('no active universe — admin must run Big Bang to create one');
 }

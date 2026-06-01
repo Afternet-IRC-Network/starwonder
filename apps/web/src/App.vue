@@ -1,21 +1,149 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue';
-import type { MeResponse } from '@starwonder/shared';
-import { api, type SectorView, type UniverseInfo } from './api';
+import type { MeResponse, ShipData } from '@starwonder/shared';
+import { api, type SectorView, type UniverseInfo, type MapView } from './api';
 import AdminBigBang from './controllers/AdminBigBang.vue';
-import OrbitViewport from './components/game/OrbitViewport.vue';
+import AdminExplorer from './controllers/AdminExplorer.vue';
+import OrbitPanel from './components/game/OrbitPanel.vue';
+import PilotScreen from './components/game/PilotScreen.vue';
+import DockMarket from './components/game/DockMarket.vue';
+import StarChart from './components/game/StarChart.vue';
+import WarpLane from './components/game/WarpLane.vue';
 
-// ── Auth state ────────────────────────────────────────────────────────────────
+// ── State ───────────────────────────────────────────────────────────────────
 const me = ref<MeResponse | null>(null);
 const sector = ref<SectorView | null>(null);
 const universe = ref<UniverseInfo | null>(null);
+const mapView = ref<MapView | null>(null);
 const booting = ref(true);
+
+const at = computed(() => me.value?.activeTrader ?? null);
+
+// ── Star-chart selection ──────────────────────────────────────────────────────
+// `mapSelected` = a remote sector the player tapped on the map; null ⇒ following the
+// current sector (its panel is the already-loaded `sector`). The map only ever shows
+// sectors you've actually visited, so a tap always has authoritative detail to fetch.
+const mapSelected = ref<number | null>(null);
+const mapDetail = ref<SectorView | null>(null);
+const mapDetailLoading = ref(false);
+
+const panelSector = computed<SectorView | null>(() =>
+  mapSelected.value == null ? sector.value : mapDetail.value,
+);
+
+function resetMapSelection() {
+  mapSelected.value = null;
+  mapDetail.value = null;
+  travelError.value = '';
+}
+
+function onMapSelect(id: number) {
+  if (id === at.value?.currentSector) { resetMapSelection(); return; }
+  mapSelected.value = id;
+  mapDetail.value = null;
+  mapDetailLoading.value = true;
+  api
+    .sector(id)
+    .then((s) => { mapDetail.value = s; })
+    .catch(() => { mapDetail.value = null; })
+    .finally(() => { mapDetailLoading.value = false; });
+}
+
+// ── Route plotting ────────────────────────────────────────────────────────────
+// Cheapest-energy course over *known* space (lanes between known sectors + taken
+// wormholes — exactly the `MapView.edges`). Display-only here; the actual travel below is
+// authoritative, walking it one `/api/move` at a time.
+function planRoute(
+  view: MapView,
+  from: number,
+  to: number,
+  costs?: { move: number; wormhole: number },
+): { path: number[]; hops: number; energy: number } | null {
+  const move = costs?.move ?? 1;
+  const worm = costs?.wormhole ?? 1;
+  const adj = new Map<number, { to: number; kind: 'lane' | 'wormhole' }[]>();
+  const nodes = new Set<number>([from]);
+  for (const e of view.edges) {
+    nodes.add(e.a); nodes.add(e.b);
+    (adj.get(e.a) ?? adj.set(e.a, []).get(e.a)!).push({ to: e.b, kind: e.kind });
+    (adj.get(e.b) ?? adj.set(e.b, []).get(e.b)!).push({ to: e.a, kind: e.kind });
+  }
+  const dist = new Map<number, number>([[from, 0]]);
+  const prev = new Map<number, number>();
+  const done = new Set<number>();
+  for (;;) {
+    let u = -1, best = Infinity;
+    for (const n of nodes) {
+      if (done.has(n)) continue;
+      const d = dist.get(n);
+      if (d !== undefined && d < best) { best = d; u = n; }
+    }
+    if (u === -1 || u === to) break;
+    done.add(u);
+    for (const { to: v, kind } of adj.get(u) ?? []) {
+      const nd = best + (kind === 'wormhole' ? worm : move);
+      if (nd < (dist.get(v) ?? Infinity)) { dist.set(v, nd); prev.set(v, u); }
+    }
+  }
+  if (!dist.has(to)) return null;
+  const path: number[] = [];
+  for (let cur: number | undefined = to; cur !== undefined; cur = prev.get(cur)) {
+    path.unshift(cur);
+    if (cur === from) break;
+  }
+  if (path[0] !== from) return null;
+  return { path, hops: path.length - 1, energy: dist.get(to)! };
+}
+
+const route = computed<{ path: number[]; hops: number; energy: number } | null>(() => {
+  const target = mapSelected.value;
+  if (target == null || !mapView.value || !at.value) return null;
+  if (target === at.value.currentSector) return null;
+  return planRoute(mapView.value, at.value.currentSector, target, universe.value?.costs);
+});
+const routePath = computed<number[]>(() => route.value?.path ?? []);
+const canAffordRoute = computed(
+  () => !!route.value && !!at.value && at.value.energy >= route.value.energy,
+);
+
+const traveling = ref(false);
+const travelError = ref('');
+async function travelRoute() {
+  const r = route.value;
+  if (!r || traveling.value || !me.value?.activeTrader) return;
+  traveling.value = true;
+  travelError.value = '';
+  const t = me.value.activeTrader;
+  let ok = true;
+  try {
+    // Walk the course hop-by-hop; each move is validated server-side.
+    for (let i = 1; i < r.path.length; i++) {
+      const res = await api.move({ to: r.path[i] });
+      t.currentSector = res.trader.currentSector;
+      t.energy = res.trader.energy;
+      t.credits = res.trader.credits;
+      t.ship = res.trader.ship;
+      sector.value = res.sector;
+      if (res.discovered) announceDiscovery(res.sector); // charting a frontier en route
+    }
+  } catch (e) {
+    travelError.value = (e as Error).message;
+    ok = false;
+  }
+  // Fog grew as far as we got — refresh the chart either way.
+  try { mapView.value = await api.map(); } catch { /* keep stale view */ }
+  traveling.value = false;
+  if (ok) {
+    resetMapSelection();
+    navigate('star'); // arrived → drop back to the star screen at the destination
+  }
+  // On failure: stay on the map so the route + error stay visible.
+}
 
 // ── Hash router ───────────────────────────────────────────────────────────────
 const GAME_TABS = ['star', 'map', 'dock', 'ship', 'log'] as const;
 type GameTab = (typeof GAME_TABS)[number];
 const AUTH_PAGES = ['login', 'register'] as const;
-const ALL_PAGES = [...AUTH_PAGES, 'admin', ...GAME_TABS] as const;
 
 const hash = ref(window.location.hash.replace(/^#/, '') || '');
 
@@ -30,24 +158,23 @@ onMounted(() => {
   });
 });
 
-// ── Derived state ─────────────────────────────────────────────────────────────
-// Top-level view gated by auth (unchanged from before — hash doesn't affect gating)
+// ── Derived view ──────────────────────────────────────────────────────────────
 const view = computed(() => {
   if (!me.value) return 'auth';
-  if (me.value.isAdmin && !me.value.universeExists) return 'admin-setup';
+  const m = me.value;
+  if (m.user.isAdmin && !m.universeExists) return 'admin-setup';
+  if (m.user.isAdmin && hash.value === 'admin') return 'admin-explore';
+  if (!m.universeExists) return 'no-universe';
+  if (!m.activeTrader) return 'pilot';
   return 'game';
 });
 
-// Which auth form (login vs register) — driven by hash
 const mode = computed(() => (hash.value === 'register' ? 'register' : 'login'));
-
-// Active game tab — driven by hash, defaults to 'star'
 const gameTab = computed<GameTab>(() =>
   (GAME_TABS as readonly string[]).includes(hash.value) ? (hash.value as GameTab) : 'star',
 );
 
 // ── Navigation sync ───────────────────────────────────────────────────────────
-// After boot, keep the URL in sync with view transitions (login → game, etc.)
 watch(view, (newView, oldView) => {
   if (booting.value) return;
   if (newView === 'auth' && !(AUTH_PAGES as readonly string[]).includes(hash.value)) {
@@ -55,26 +182,75 @@ watch(view, (newView, oldView) => {
   } else if (newView === 'admin-setup' && hash.value !== 'admin') {
     navigate('admin');
   } else if (newView === 'game' && oldView !== 'game') {
-    // Preserve a valid game-tab hash if they refresh on e.g. #map, otherwise go to #star
+    if (!sector.value) loadGame();
     if (!(GAME_TABS as readonly string[]).includes(hash.value)) navigate('star');
+  }
+});
+
+// Lazily load the fog map when the map tab is opened.
+watch([gameTab, view], async ([tab, v]) => {
+  if (v === 'game' && tab === 'map' && !mapView.value) {
+    try {
+      mapView.value = await api.map();
+    } catch { /* ignore — shown as empty */ }
   }
 });
 
 // ── Game data ─────────────────────────────────────────────────────────────────
 async function loadGame() {
-  if (!me.value) return;
+  if (!at.value) return;
   [universe.value, sector.value] = await Promise.all([
     api.universe(),
-    api.sector(me.value.currentSector),
+    api.sector(at.value.currentSector),
   ]);
 }
 
-async function jumpTo(id: number) {
-  sector.value = await api.sector(id);
+const moveError = ref('');
+const moving = ref(false);
+
+// "New sector charted" toast — fired on the *arrival event* (the move's `discovered` flag),
+// not the sector's visited state, so it never re-fires when you flip back to the Star tab.
+// Auto-dismisses; shows over the orbit viewport.
+const discovery = ref<string | null>(null);
+let discoveryTimer: ReturnType<typeof setTimeout> | null = null;
+function announceDiscovery(sec: SectorView) {
+  discovery.value = sec.planet
+    ? `New system charted · ${sec.planet.name}`
+    : `Uncharted space surveyed · ${sec.addr}`;
+  if (discoveryTimer) clearTimeout(discoveryTimer);
+  discoveryTimer = setTimeout(() => { discovery.value = null; }, 4500);
 }
 
-// ── Auth actions ──────────────────────────────────────────────────────────────
-const handle = ref('');
+async function move(body: { to: number } | { wormhole: number }) {
+  if (moving.value || !me.value?.activeTrader) return;
+  moving.value = true;
+  moveError.value = '';
+  try {
+    const res = await api.move(body);
+    const t = me.value.activeTrader;
+    t.currentSector = res.trader.currentSector;
+    t.energy = res.trader.energy;
+    t.credits = res.trader.credits;
+    t.ship = res.trader.ship;
+    sector.value = res.sector;
+    if (res.discovered) announceDiscovery(res.sector);
+    mapView.value = null; // fog grew — refetch on next map view
+    resetMapSelection(); // map follows you to the new sector
+  } catch (e) {
+    moveError.value = (e as Error).message;
+  } finally {
+    moving.value = false;
+  }
+}
+
+function onTraded(trader: { credits: number; ship: ShipData }) {
+  if (!me.value?.activeTrader) return;
+  me.value.activeTrader.credits = trader.credits;
+  me.value.activeTrader.ship = trader.ship;
+}
+
+// ── Auth ────────────────────────────────────────────────────────────────────
+const username = ref('');
 const password = ref('');
 const gate = ref('');
 const formError = ref('');
@@ -86,9 +262,8 @@ async function submit() {
   try {
     me.value =
       mode.value === 'register'
-        ? await api.register({ gate: gate.value, handle: handle.value, password: password.value })
-        : await api.login({ handle: handle.value, password: password.value });
-    // view watcher handles navigation; load game data if we landed in game view
+        ? await api.register({ gate: gate.value, username: username.value, password: password.value })
+        : await api.login({ username: username.value, password: password.value });
     if (view.value === 'game') await loadGame();
   } catch (e) {
     formError.value = (e as Error).message;
@@ -101,48 +276,56 @@ async function logout() {
   await api.logout();
   me.value = null;
   sector.value = null;
-  // view watcher navigates to #login
+  mapView.value = null;
+}
+
+async function onPilotReady(m: MeResponse) {
+  me.value = m;
+  await loadGame();
+  navigate('star');
 }
 
 async function onBigBangDone() {
   me.value = await api.me();
-  if (me.value) await loadGame();
-  // view watcher navigates to #star
+  navigate('admin');
+}
+
+async function onUniverseChanged() {
+  me.value = await api.me();
+  sector.value = null;
+  mapView.value = null;
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 onMounted(async () => {
   me.value = await api.me();
-  if (me.value && view.value === 'game') await loadGame();
+  // Public — also tells us if this is a fresh deploy with no world yet.
+  try { universe.value = await api.universe(); } catch { /* offline — handled below */ }
+  if (view.value === 'game') await loadGame();
   booting.value = false;
 
-  // Set a valid initial hash based on auth state (respects existing valid hashes)
   if (view.value === 'auth') {
-    if (!(AUTH_PAGES as readonly string[]).includes(hash.value)) navigate('login');
+    // Fresh instance (no world yet) → default to register so the first admin can sign up;
+    // once a world exists, returning players land on login.
+    if (!(AUTH_PAGES as readonly string[]).includes(hash.value)) {
+      navigate(universe.value?.exists ? 'login' : 'register');
+    }
   } else if (view.value === 'admin-setup') {
     if (hash.value !== 'admin') navigate('admin');
-  } else {
+  } else if (view.value === 'admin-explore') {
+    // keep #admin
+  } else if (view.value === 'game') {
     if (!(GAME_TABS as readonly string[]).includes(hash.value)) navigate('star');
   }
 });
 
 // ── Misc ──────────────────────────────────────────────────────────────────────
 const energyPct = computed(() =>
-  me.value ? Math.round((me.value.energy / me.value.energyCap) * 100) : 0,
+  at.value ? Math.round((at.value.energy / at.value.energyCap) * 100) : 0,
 );
-
-const tierLabel: Record<SectorView['dangerTier'], string> = {
-  peaceful: 'Peaceful',
-  medium: 'Medium',
-  dangerous: 'Dangerous',
-  'very-dangerous': 'Very dangerous',
-};
-const tierColor: Record<SectorView['dangerTier'], string> = {
-  peaceful: 'text-good',
-  medium: 'text-gold',
-  dangerous: 'text-bad',
-  'very-dangerous': 'text-bad',
-};
+const holdUsed = computed(() =>
+  at.value ? Object.values(at.value.ship.cargo).reduce((a, b) => a + b, 0) : 0,
+);
 </script>
 
 <template>
@@ -151,20 +334,20 @@ const tierColor: Record<SectorView['dangerTier'], string> = {
     loading…
   </div>
 
-  <!-- ── Auth ── centred card ─────────────────────────────────────────────── -->
+  <!-- ── Auth ── -->
   <div v-else-if="view === 'auth'" class="min-h-screen grid place-items-center p-4 bg-bg">
     <div class="w-full max-w-sm bg-panel border border-line rounded-2xl p-6">
       <h1 class="text-lg font-bold tracking-wide">StarWonder</h1>
       <p class="text-xs text-muted mt-1 mb-5">
         {{ mode === 'register'
-          ? 'Create a pilot. You need the gate password to join.'
-          : 'Welcome back, pilot.' }}
+          ? 'Create an account. You need the gate password to join.'
+          : 'Welcome back.' }}
       </p>
 
       <form class="flex flex-col gap-3" @submit.prevent="submit">
         <input
-          v-model="handle"
-          placeholder="callsign"
+          v-model="username"
+          placeholder="username"
           autocomplete="username"
           class="bg-panel2 border border-line rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent transition-colors"
         />
@@ -185,7 +368,7 @@ const tierColor: Record<SectorView['dangerTier'], string> = {
           :disabled="busy"
           class="bg-accent/15 border border-accent text-accent rounded-lg px-3 py-2 font-semibold text-sm disabled:opacity-50 hover:bg-accent/25 transition-colors"
         >
-          {{ busy ? '…' : mode === 'register' ? 'Launch' : 'Log in' }}
+          {{ busy ? '…' : mode === 'register' ? 'Create account' : 'Log in' }}
         </button>
       </form>
 
@@ -195,41 +378,68 @@ const tierColor: Record<SectorView['dangerTier'], string> = {
         class="text-muted text-xs mt-4 underline hover:text-fg transition-colors"
         @click="navigate(mode === 'register' ? 'login' : 'register')"
       >
-        {{ mode === 'register' ? 'Have an account? Log in' : 'New here? Create a pilot' }}
+        {{ mode === 'register' ? 'Have an account? Log in' : 'New here? Create an account' }}
       </button>
     </div>
   </div>
 
-  <!-- ── Admin setup ── full-width ────────────────────────────────────────── -->
-  <AdminBigBang v-else-if="view === 'admin-setup'" @done="onBigBangDone" />
+  <!-- ── Admin setup ── -->
+  <AdminBigBang
+    v-else-if="view === 'admin-setup'"
+    :universe-exists="me?.universeExists"
+    @done="onBigBangDone"
+  />
 
-  <!-- ── Game ── phone-width layout ──────────────────────────────────────── -->
-  <div v-else class="min-h-screen mx-auto max-w-md flex flex-col">
+  <!-- ── Admin explorer ── -->
+  <AdminExplorer v-else-if="view === 'admin-explore'" @universe-changed="onUniverseChanged" />
+
+  <!-- ── No universe (non-admin) ── -->
+  <div v-else-if="view === 'no-universe'" class="min-h-screen grid place-items-center p-4 text-center">
+    <div class="max-w-xs">
+      <h1 class="text-lg font-bold">The galaxy isn't ready yet</h1>
+      <p class="text-sm text-muted mt-2">An admin needs to run the Big Bang. Check back soon.</p>
+      <button class="text-muted text-xs mt-4 underline hover:text-fg" @click="logout">log out</button>
+    </div>
+  </div>
+
+  <!-- ── Pilot screen ── -->
+  <PilotScreen
+    v-else-if="view === 'pilot' && me"
+    :me="me"
+    @ready="onPilotReady"
+    @logout="logout"
+  />
+
+  <!-- ── Game ── -->
+  <div v-else-if="view === 'game' && at" class="min-h-screen mx-auto max-w-md flex flex-col">
 
     <header class="px-4 pt-4 pb-3 border-b border-line flex-shrink-0">
       <div class="flex items-center justify-between">
-        <div>
-          <div class="text-[11px] uppercase tracking-[2px] text-muted capitalize">
-            {{ gameTab }} view
-          </div>
-          <div class="font-mono text-sm text-accent">{{ sector?.addr ?? '—' }}</div>
+        <div class="font-mono text-sm text-accent">{{ sector?.addr ?? '—' }}</div>
+        <div class="flex items-center gap-3">
+          <span class="text-[11px] text-muted">{{ at.name }}</span>
+          <button
+            v-if="me?.user.isAdmin"
+            class="text-muted text-xs underline hover:text-fg transition-colors"
+            @click="navigate('admin')"
+          >admin</button>
+          <button class="text-muted text-xs underline hover:text-fg transition-colors" @click="logout">
+            log out
+          </button>
         </div>
-        <button
-          class="text-muted text-xs underline hover:text-fg transition-colors"
-          @click="logout"
-        >
-          log out
-        </button>
       </div>
-      <div class="mt-3">
-        <div class="flex justify-between text-[11px] text-muted mb-1">
-          <span>Energy</span><span>{{ me!.energy }} / {{ me!.energyCap }}</span>
+      <div class="mt-3 flex items-center gap-3">
+        <div class="flex-1">
+          <div class="flex justify-between text-[11px] text-muted mb-1">
+            <span>Energy</span><span>{{ at.energy }} / {{ at.energyCap }}</span>
+          </div>
+          <div class="h-1.5 rounded-full bg-panel2 overflow-hidden">
+            <div class="h-full bg-accent transition-all duration-300" :style="{ width: energyPct + '%' }" />
+          </div>
         </div>
-        <div class="h-1.5 rounded-full bg-panel2 overflow-hidden">
-          <div
-            class="h-full bg-accent transition-all duration-300"
-            :style="{ width: energyPct + '%' }"
-          />
+        <div class="text-right">
+          <div class="text-[11px] text-muted">Credits</div>
+          <div class="text-sm text-gold font-mono">{{ at.credits }}</div>
         </div>
       </div>
     </header>
@@ -238,110 +448,159 @@ const tierColor: Record<SectorView['dangerTier'], string> = {
 
       <!-- Star tab -->
       <template v-if="gameTab === 'star'">
-
-        <!-- Orbit viewport -->
-        <OrbitViewport v-if="sector" :sector="sector" />
-        <div v-else class="h-[230px] rounded-2xl border border-line bg-[#080c16] grid place-items-center text-muted text-xs">
-          loading…
-        </div>
-
-        <!-- Planet stats card -->
-        <div v-if="sector?.planet" class="bg-panel border border-line rounded-xl px-4 py-3">
-          <div class="text-[10px] uppercase tracking-[2px] text-muted mb-2">In orbit</div>
-          <div class="flex items-start gap-3">
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2 flex-wrap">
-                <span class="text-sm font-semibold capitalize">
-                  {{ sector.id === 0 ? 'Earth' : sector.planet.palette + ' world' }}
-                </span>
-                <span
-                  :class="[
-                    'text-[10px] px-1.5 py-0.5 rounded-md border font-medium',
-                    sector.planet.atmosphere === 'breathable' ? 'text-good  border-good/30  bg-good/10'  :
-                    sector.planet.atmosphere === 'thick'      ? 'text-accent border-accent/30 bg-accent/10' :
-                    sector.planet.atmosphere === 'thin'       ? 'text-muted  border-line      bg-panel2'  :
-                    'text-bad border-bad/30 bg-bad/10',
-                  ]"
-                >
-                  {{ sector.planet.atmosphere }}
-                </span>
-              </div>
-              <div class="text-xs text-muted mt-1.5 font-mono space-x-3">
-                <span>R {{ sector.planet.size }}</span>
-                <span>{{ sector.planet.gravity }}g</span>
-                <span>{{ sector.planet.dayHours }}h day</span>
-                <span>{{ sector.planet.moons }} moon{{ sector.planet.moons === 1 ? '' : 's' }}</span>
-              </div>
-            </div>
-            <div
-              :class="[
-                'text-[10px] px-2 py-1 rounded-lg border font-medium flex-shrink-0',
-                sector.station?.stationType === 'haven'   ? 'text-accent border-accent/30 bg-accent/10' :
-                sector.station?.stationType === 'outpost' ? 'text-gold   border-gold/30   bg-gold/10'   :
-                'text-muted border-line bg-panel2',
-              ]"
-            >
-              {{ sector.station?.stationType ?? 'no station' }}
-            </div>
+        <div class="relative">
+          <OrbitPanel v-if="sector" :sector="sector" />
+          <div v-else class="h-[230px] rounded-2xl border border-line bg-[#080c16] grid place-items-center text-muted text-xs">
+            loading…
           </div>
+          <!-- First-visit toast — fades in over the viewport, auto-dismisses -->
+          <Transition
+            enter-active-class="transition duration-300 ease-out"
+            enter-from-class="opacity-0 -translate-y-2"
+            enter-to-class="opacity-100 translate-y-0"
+            leave-active-class="transition duration-500 ease-in"
+            leave-to-class="opacity-0 -translate-y-1"
+          >
+            <div
+              v-if="discovery"
+              class="absolute top-2.5 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#0e1730]/90 border border-accent/60 text-[11px] font-semibold text-fg backdrop-blur-sm shadow-lg shadow-black/40 whitespace-nowrap"
+            >
+              <span class="text-gold">✦</span> {{ discovery }}
+            </div>
+          </Transition>
         </div>
 
-        <!-- Warp lanes — horizontal scroll, matching mockup card style -->
+        <p v-if="moveError" class="text-bad text-xs px-1">{{ moveError }}</p>
+
         <div v-if="sector">
           <div class="text-[10px] uppercase tracking-[2px] text-muted mb-2 px-1">Warp lanes</div>
           <div class="flex gap-2 overflow-x-auto pb-1 -mx-4 px-4">
+            <!-- Lanes -->
+            <WarpLane
+              v-for="lane in (sector.lanes ?? [])"
+              :key="'l' + lane.id"
+              :lane="lane"
+              :disabled="moving || at.energy < (universe?.costs.move ?? 1)"
+              @go="move({ to: lane.id })"
+            />
+            <!-- Wormholes -->
             <button
-              v-for="n in sector.neighbors"
-              :key="n"
-              class="flex-shrink-0 min-w-[108px] bg-panel2 border border-line rounded-xl p-3 text-left hover:border-accent transition-colors"
-              @click="jumpTo(n)"
-            >
-              <div class="font-bold text-sm font-mono text-fg">#{{ n }}</div>
-              <div class="text-[10px] text-muted mt-1">1 ⚡ · lane</div>
-            </button>
-            <button
-              v-for="w in sector.wormholes"
-              :key="w"
-              class="flex-shrink-0 min-w-[108px] border rounded-xl p-3 text-left transition-colors"
+              v-for="(w, i) in sector.wormholeExits"
+              :key="'w' + i"
+              :disabled="moving || at.energy < (universe?.costs.wormhole ?? 1)"
+              class="flex-shrink-0 min-w-[108px] border rounded-xl p-3 text-left transition-colors disabled:opacity-40"
               style="background:#161226;border-color:#5a4a1e"
-              @click="jumpTo(w)"
+              @click="w.to != null ? move({ to: w.to }) : move({ wormhole: w.ref })"
             >
-              <div class="font-bold text-sm font-mono text-gold">◌ #{{ w }}</div>
-              <div class="text-[10px] text-muted mt-1">3 ⚡ · wormhole</div>
+              <div class="font-bold text-sm font-mono text-gold">
+                <template v-if="w.to != null">◌ #{{ w.to }}</template>
+                <template v-else>◌ unknown</template>
+              </div>
+              <div class="text-[10px] text-muted mt-1">{{ universe?.costs.wormhole ?? 1 }} ⚡ · wormhole</div>
             </button>
-            <div v-if="!sector.neighbors.length && !sector.wormholes.length"
+            <div v-if="!sector.neighbors.length && !sector.wormholeExits.length"
               class="flex-shrink-0 min-w-[108px] bg-panel2 border border-dashed border-line rounded-xl p-3">
               <div class="text-sm text-muted">isolated</div>
               <div class="text-[10px] text-muted mt-1">no open lanes</div>
             </div>
           </div>
         </div>
-
-        <p v-if="universe" class="text-center text-[11px] text-muted">
-          universe "{{ universe.seed }}" · {{ universe.reachable }}/{{ universe.size }} sectors
-        </p>
       </template>
 
-      <!-- Other tabs — stubs -->
+      <!-- Map tab -->
+      <template v-else-if="gameTab === 'map'">
+        <div class="text-[10px] uppercase tracking-[2px] text-muted px-1">Known space</div>
+        <StarChart
+          v-if="mapView"
+          :view="mapView"
+          :current="at.currentSector"
+          :selected="mapSelected"
+          :route="routePath"
+          @select="onMapSelect"
+        />
+        <div v-else class="h-[268px] rounded-2xl border border-line bg-[#070b14] grid place-items-center text-muted text-xs">
+          loading map…
+        </div>
+
+        <!-- Selected sector — the shared sector view (minus "also here") -->
+        <template v-if="mapView">
+          <div
+            v-if="mapDetailLoading && !panelSector"
+            class="h-[230px] rounded-2xl border border-line bg-[#080c16] grid place-items-center text-muted text-xs"
+          >
+            scanning sector…
+          </div>
+          <div v-else-if="panelSector">
+            <div class="text-[10px] uppercase tracking-[2px] text-muted mb-2 px-1">
+              {{ panelSector.id === at.currentSector ? 'You are here' : 'Inspecting' }}
+            </div>
+            <OrbitPanel :sector="panelSector" />
+          </div>
+
+          <!-- Route to the selected sector — sibling of OrbitPanel, so it sits under "In orbit" -->
+          <div v-if="mapSelected != null && mapSelected !== at.currentSector">
+            <div class="text-[10px] uppercase tracking-[2.5px] text-muted mt-3 mb-1.5">Route</div>
+            <template v-if="route">
+              <div class="flex items-center gap-3 bg-panel border border-line rounded-xl px-3 py-2.5">
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm font-semibold">
+                    {{ route.hops }} hop{{ route.hops === 1 ? '' : 's' }} · {{ route.energy }} ⚡
+                  </div>
+                  <div class="text-[11px]" :class="canAffordRoute ? 'text-muted' : 'text-bad'">
+                    <template v-if="canAffordRoute">{{ at.energy }} ⚡ available</template>
+                    <template v-else>need {{ route.energy }} ⚡ · only {{ at.energy }} available</template>
+                  </div>
+                </div>
+                <button
+                  :disabled="!canAffordRoute || traveling"
+                  class="flex-shrink-0 rounded-lg px-4 py-2 text-sm font-semibold bg-accent/15 border border-accent text-accent disabled:opacity-40 hover:bg-accent/25 transition-colors"
+                  @click="travelRoute"
+                >{{ traveling ? 'travelling…' : 'Travel here' }}</button>
+              </div>
+              <p v-if="travelError" class="text-bad text-xs mt-1 px-1">{{ travelError }}</p>
+            </template>
+            <div v-else class="bg-panel border border-dashed border-line rounded-xl px-3 py-2.5 text-[11px] text-muted">
+              No charted route — explore a path there first.
+            </div>
+          </div>
+        </template>
+      </template>
+
+      <!-- Dock tab -->
+      <template v-else-if="gameTab === 'dock'">
+        <DockMarket v-if="sector" :sector="sector" :trader="at" @traded="onTraded" />
+      </template>
+
+      <!-- Ship tab -->
+      <template v-else-if="gameTab === 'ship'">
+        <div class="bg-panel border border-line rounded-2xl p-4">
+          <div class="text-sm font-semibold mb-2">{{ at.name }}'s ship</div>
+          <div class="flex justify-between text-[11px] text-muted mb-3">
+            <span>Cargo hold</span><span>{{ holdUsed }} / {{ at.ship.holdSize }} tons</span>
+          </div>
+          <div v-if="holdUsed === 0" class="text-muted text-xs">Cargo hold empty.</div>
+          <ul v-else class="text-sm flex flex-col gap-1">
+            <li v-for="(qty, id) in at.ship.cargo" :key="id" class="flex justify-between">
+              <span class="capitalize">{{ id }}</span><span class="font-mono text-muted">{{ qty }}</span>
+            </li>
+          </ul>
+        </div>
+      </template>
+
+      <!-- Log tab -->
       <div v-else class="flex-1 grid place-items-center text-muted text-sm py-16">
         {{ gameTab }} · coming soon
       </div>
 
     </main>
 
-    <!-- Tab bar -->
     <nav class="border-t border-line grid grid-cols-5 flex-shrink-0">
       <button
         v-for="tab in GAME_TABS"
         :key="tab"
-        :class="[
-          'py-3 text-[11px] capitalize transition-colors',
-          gameTab === tab ? 'text-accent' : 'text-muted hover:text-fg',
-        ]"
+        :class="['py-3 text-[11px] capitalize transition-colors', gameTab === tab ? 'text-accent' : 'text-muted hover:text-fg']"
         @click="navigate(tab)"
-      >
-        {{ tab }}
-      </button>
+      >{{ tab }}</button>
     </nav>
 
   </div>

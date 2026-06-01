@@ -11,6 +11,7 @@ const seed = defineModel<string>('seed', { required: true });
 const starVal = defineModel<number>('starVal', { required: true });
 const laneVal = defineModel<number>('laneVal', { required: true });
 const biasVal = defineModel<number>('biasVal', { required: true });
+const habitVal = defineModel<number>('habitVal', { required: true });
 const whVal = defineModel<number>('whVal', { required: true });
 const showBlocked = defineModel<boolean>('showBlocked', { required: true });
 const showWormholes = defineModel<boolean>('showWormholes', { required: true });
@@ -49,6 +50,13 @@ const showGradient = defineModel<boolean>('showGradient', { required: true });
       :display-value="(biasVal / 100).toFixed(2)"
       :min="0" :max="100"
       hint="Tilts lane probability by distance from Sol — denser core, frayed rim. Mean stays ≈ lane prob."
+    />
+    <RangeSlider
+      v-model="habitVal"
+      label="Habitation falloff"
+      :display-value="(habitVal / 100).toFixed(2)"
+      :min="0" :max="100"
+      hint="Thins settlement toward the rim. 0 = uniform; higher = emptier frontier. Does not affect world type."
     />
     <RangeSlider
       v-model="whVal"

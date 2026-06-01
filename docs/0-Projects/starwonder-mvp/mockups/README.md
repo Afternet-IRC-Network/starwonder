@@ -13,6 +13,9 @@ station-lab-2.html         station-icon knob sweep — zoomed crop + hub
 station-lab-3.html         station-icon knob sweep — full wheel (chosen W3)
 map-admin.html             admin/debug universe builder — pinwheel galaxy, hash lanes,
                            star/lane/wormhole knobs, Sol-reachability + seed finder
+map-player-1-navgrid.html  player map option ① — ASCII nav-grid (box-drawing lanes) in the box
+map-player-2-warpweb.html  player map option ② — topological warp-web (centred on you)
+map-player-3-starfield.html player map option ③ ← ✅ CHOSEN — voxel starfield + sector panel
 ```
 
 Live (GitHub Pages), e.g. the canonical one:
@@ -80,9 +83,16 @@ generated from the seed → 1000 unique-but-stable bodies & a sprite per ship fo
   art is deterministic per sector/entity.
 
 ## Still to decide / do next
-1. **The player-facing Map screen** — fog-of-war: unexplored = near-black, explored = lit,
-   wormhole links drawn, in the D style. The *admin* universe map is built
-   (`map-admin.html`); this is the limited, explored-only **player** view. ← **next up**
+1. **The player-facing Map screen** — ✅ **done.** Three options were explored
+   (`map-player-1-navgrid` / `-2-warpweb` / `-3-starfield`); we chose **③ Voxel Starfield**:
+   true sector positions over a parallax field, each charted world drawn as its own
+   pixel-planet (colour = class, **no danger overlay** — that's server geometry), lanes +
+   taken wormholes as trails, drag-to-pan / scroll-to-zoom, centred on you. Tapping a world
+   opens a light sector panel below (the shared `OrbitPanel`, minus "Also here"). Built in
+   the app as `apps/web/src/components/game/StarChart.vue`, fed the fogged `MapView` (the
+   server now bakes visited worlds' palette/spin/name into the fog view). Distinct from the
+   *admin* map (`map-admin.html` / `GalaxyMap.vue`), which stays a technical scatter for
+   debugging generation.
 2. **Planet-type palettes** — current set ocean/lava/ice/arid; expand and tie to the star's
    seed so each sector's world is deterministic.
 3. **Voxel fidelity** — flat-shaded pixel look is the baseline; revisit true isometric

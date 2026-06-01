@@ -8,82 +8,49 @@
  */
 import { ref, watch, computed, onMounted, onUnmounted } from 'vue';
 import type { SectorView } from '../../api';
+import { WORLD_CLASS_INFO } from '@starwonder/game-core';
 import type { WheelOpts } from './wheel';
 import { drawWheel } from './wheel';
+import { hashStr, mulberry32, makePlanet } from './planet';
 
 const props = defineProps<{ sector: SectorView }>();
+
+// Atmosphere colour-coded by breathability (for the overlaid stat line).
+const atmColor: Record<string, string> = {
+  breathable: 'text-good',
+  thin: 'text-muted',
+  thick: 'text-accent',
+  none: 'text-muted',
+  toxic: 'text-bad',
+  corrosive: 'text-bad',
+};
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const starsRef  = ref<HTMLCanvasElement | null>(null);
 const planetRef = ref<HTMLCanvasElement | null>(null);
 const heroRef   = ref<HTMLCanvasElement | null>(null);
-const ptypeRef  = ref<HTMLDivElement   | null>(null);
 
-// ── Hash / RNG ────────────────────────────────────────────────────────────────
-function hashStr(s: string): number {
-  let h = 2166136261 >>> 0;
-  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
-  return h >>> 0;
-}
-function mulberry32(a: number): () => number {
-  return function () {
-    a |= 0; a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+// Hash/RNG + the planet renderer live in ./planet (shared with the star-chart map).
 
-// ── Planet palettes (verbatim from mockup) ────────────────────────────────────
-const PALETTES: Record<string, number[][]> = {
-  ocean: [[16,34,86],[24,64,140],[36,120,168],[58,158,150],[120,180,110],[210,216,190]],
-  lava:  [[40,12,12],[96,22,18],[170,52,24],[224,110,36],[250,196,90],[255,238,170]],
-  ice:   [[24,40,70],[44,78,120],[96,150,190],[150,200,224],[210,232,244],[245,250,255]],
-  arid:  [[48,30,18],[96,60,30],[150,100,52],[196,150,86],[222,190,130],[244,228,186]],
-};
-
-// ── Planet renderer (verbatim from mockup) ────────────────────────────────────
-function makePlanet(canvas: HTMLCanvasElement, seedStr: string, palette: string) {
-  const rng = mulberry32(hashStr(seedStr + '|planet'));
-  const N   = canvas.width;
-  const ctx = canvas.getContext('2d')!;
-  const R   = N / 2 - 1, cx = N / 2, cy = N / 2;
-  const pal = PALETTES[palette] ?? PALETTES.ocean;
-  const bands: { fx: number; fy: number; ph: number; a: number }[] = [];
-  for (let i = 0; i < 4; i++)
-    bands.push({ fx: 1 + rng() * 4, fy: 1 + rng() * 4, ph: rng() * 6.283, a: 0.5 + rng() });
-  const bayer = [[0, 2], [3, 1]];
-  const lx = -0.55, ly = -0.5, lz = 0.66;
-
-  return function frame(spin: number) {
-    const img = ctx.createImageData(N, N);
-    for (let py = 0; py < N; py++) {
-      for (let px = 0; px < N; px++) {
-        const x = (px - cx) / R, y = (py - cy) / R;
-        const r2 = x * x + y * y;
-        const idx = (py * N + px) * 4;
-        if (r2 > 1) { img.data[idx + 3] = 0; continue; }
-        const z   = Math.sqrt(1 - r2);
-        const lat = Math.asin(Math.max(-1, Math.min(1, y)));
-        const lon = Math.atan2(x, z) + spin;
-        let t = 0, amp = 0;
-        for (const b of bands) { t += b.a * Math.sin(b.fx * lon + b.fy * lat + b.ph); amp += b.a; }
-        t = (t / amp + 1) / 2;
-        const L = Math.max(0.06, x * lx + y * ly + z * lz);
-        const f = t * (pal.length - 1) * 0.72 + L * (pal.length - 1) * 0.55
-                + (bayer[py & 1][px & 1] / 4 - 0.5);
-        const pi = Math.max(0, Math.min(pal.length - 1, Math.round(f)));
-        const [r, g, bl] = pal[pi];
-        const lit = 0.4 + L * 0.8;
-        img.data[idx]     = Math.min(255, r  * lit);
-        img.data[idx + 1] = Math.min(255, g  * lit);
-        img.data[idx + 2] = Math.min(255, bl * lit);
-        img.data[idx + 3] = 255;
-      }
-    }
-    ctx.putImageData(img, 0, 0);
-  };
-}
+// ── Planet display size ───────────────────────────────────────────────────────
+// The drawn planet scales with its diameter. `size` is in Earth radii: ~88% of worlds
+// are rocky and cluster in 0.3–1.8, while gas giants run 3.5–12. If we mapped the whole
+// range evenly, every ordinary world would render near-identical and only gas giants
+// would stand out — so we give the *common* rocky range the bulk of the visible band
+// (0.3→1.8 ⇒ 60%→92% of the reference) and let the rare giants edge to the max (→100%).
+// Tune MIN_SCALE to make the spread more/less dramatic.
+const PLANET_PX = 180;
+const MIN_SCALE = 0.6;          // smallest world, as a fraction of the reference size
+const planetPx = computed(() => {
+  const size = props.sector.planet?.size;
+  if (!size) return PLANET_PX;
+  const common = 0.92 - MIN_SCALE; // band reserved for rocky worlds (0.3–1.8)
+  const scale = size <= 1.8
+    ? MIN_SCALE + common * ((Math.min(size, 1.8) - 0.3) / 1.5)
+    : 0.92 + 0.08 * Math.min(1, (size - 1.8) / (12 - 1.8));
+  return Math.round(PLANET_PX * Math.max(MIN_SCALE, Math.min(1, scale)));
+});
 
 // ── Station opts from sector data ─────────────────────────────────────────────
 const stationOpts = computed<WheelOpts | null>(() => {
@@ -101,14 +68,6 @@ const stationOpts = computed<WheelOpts | null>(() => {
     hub:        s.hub,
   };
 });
-
-// ── Planet type label ─────────────────────────────────────────────────────────
-const PLANET_LABELS: Record<string, string> = {
-  ocean: 'ocean world · breathable atmosphere',
-  lava:  'volcanic world · hostile surface',
-  ice:   'ice world · frozen wastes',
-  arid:  'arid world · sparse biosphere',
-};
 
 // ── Scene init + animation loop ───────────────────────────────────────────────
 let raf: number | null = null;
@@ -132,18 +91,14 @@ function initScene() {
   }
   sc.globalAlpha = 1;
 
-  // Planet — uses palette and spin from server-provided planet data
+  // Planet — uses palette and spin from server-provided planet data. The name/type
+  // labels are template-driven overlays (see below), not painted here.
   const planet = props.sector.planet;
   if (planet) {
     const frame = makePlanet(planetEl, props.sector.addr, planet.palette);
     frame(planet.spin);
-    if (ptypeRef.value) {
-      const prefix = props.sector.id === 0 ? 'EARTH — ' : '';
-      ptypeRef.value.textContent = prefix + (PLANET_LABELS[planet.palette] ?? '');
-    }
   } else {
     planetEl.getContext('2d')!.clearRect(0, 0, planetEl.width, planetEl.height);
-    if (ptypeRef.value) ptypeRef.value.textContent = 'no planetary body detected';
   }
 
   // Station wheel — uses params from server-provided station data, slowly spinning
@@ -168,9 +123,27 @@ onUnmounted(() => { if (raf !== null) cancelAnimationFrame(raf); });
 <template>
   <div class="viewport">
     <canvas ref="starsRef"  class="stars"  width="420" height="230" />
-    <canvas ref="planetRef" class="planet" width="72"  height="72"  />
+    <canvas ref="planetRef" class="planet" width="72"  height="72"
+            :style="{ width: planetPx + 'px', height: planetPx + 'px' }" />
     <canvas ref="heroRef"   class="hero"   width="30"  height="30"  />
-    <div    ref="ptypeRef"  class="ptype"                            />
+
+    <!-- Planet name — top-left identity -->
+    <div v-if="sector.planet" class="pname">{{ sector.planet.name }}</div>
+
+    <!-- World type — top-right toast -->
+    <div v-if="sector.planet" class="ptype">
+      {{ WORLD_CLASS_INFO[sector.planet.worldClass].label }}
+    </div>
+    <div v-else class="noplanet">no planetary bodies detected</div>
+
+    <!-- Planet stats — overlaid along the bottom, under the planet -->
+    <div v-if="sector.planet" class="pstats">
+      <span>Atmo <span :class="atmColor[sector.planet.atmosphere] ?? 'text-fg'">{{ cap(sector.planet.atmosphere) }}</span></span>
+      <span>{{ sector.planet.size }} R⊕</span>
+      <span>{{ sector.planet.gravity }} g</span>
+      <span>{{ sector.planet.dayHours }}h day</span>
+      <span>{{ sector.planet.moons }} moon{{ sector.planet.moons === 1 ? '' : 's' }}</span>
+    </div>
   </div>
 </template>
 
@@ -195,8 +168,7 @@ onUnmounted(() => { if (raf !== null) cancelAnimationFrame(raf); });
   left: 50%;
   top: 46%;
   transform: translate(-50%, -50%);
-  width: 180px;
-  height: 180px;
+  /* width/height are bound inline (scaled by planet diameter) */
   image-rendering: pixelated;
   filter: drop-shadow(0 0 14px rgba(90, 160, 200, 0.45));
 }
@@ -209,7 +181,52 @@ onUnmounted(() => { if (raf !== null) cancelAnimationFrame(raf); });
   top: 30%;
   filter: drop-shadow(0 0 5px rgba(120, 180, 220, 0.6));
 }
+.pname {
+  position: absolute;
+  top: 9px;
+  left: 12px;
+  max-width: 58%;
+  color: #eaf1ff;
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.3px;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .ptype {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: rgba(20, 28, 46, 0.72);
+  border: 1px solid #1f2a3d;
+  color: #9fb2d4;
+  font-size: 10px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  font-family: "DejaVu Sans Mono", Menlo, Consolas, monospace;
+}
+.pstats {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  column-gap: 12px;
+  row-gap: 2px;
+  padding: 0 10px;
+  color: #8b9bbd;
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  font-family: "DejaVu Sans Mono", Menlo, Consolas, monospace;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.9);
+}
+.noplanet {
   position: absolute;
   left: 0;
   right: 0;

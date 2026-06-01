@@ -1,14 +1,9 @@
-// Address = Region (1-16, the nested 8x8 squares) + the cell id #d itself, which is
-// the Sector you travel between. region = (d >> 6) + 1; the old intermediate level
-// folded into the region.
-export function regionOf(d: number): number {
-  return (d >> 6) + 1;
-}
-
+// A sector's address is just its cell id #d — the thing you travel between. There is no
+// higher "region" grouping in the UI; the Hilbert layout is an implementation detail.
 export function addr(d: number): string {
-  return `Region ${regionOf(d)} · Sector #${d}`;
+  return `Sector #${d}`;
 }
 
 export function addrShort(d: number): string {
-  return `R${regionOf(d)}·#${d}`;
+  return `#${d}`;
 }

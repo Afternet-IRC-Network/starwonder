@@ -6,3 +6,4 @@ export * from './types';
 export * from './galaxy';
 export * from './energy';
 export * from './sector-content';
+export * from './names';

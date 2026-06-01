@@ -1,22 +1,63 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue';
-import { dangerCurve, SIDE, N, type Galaxy } from '@starwonder/game-core';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { SIDE, fullMapView, type Galaxy, type MapView } from '@starwonder/game-core';
 
 const props = defineProps<{
-  galaxy: Galaxy;
-  showBlocked: boolean;
-  showWormholes: boolean;
-  showGradient: boolean;
+  /** admin: the full galaxy — enables the blocked-lane overlay and derives a full view */
+  galaxy?: Galaxy;
+  /** player: a fogged view from the server (takes precedence over `galaxy`) */
+  view?: MapView;
+  /** "you are here" marker */
+  current?: number | null;
+  showBlocked?: boolean;
+  showWormholes?: boolean;
+  showGradient?: boolean;
+  /** highlighted sector id (explorer); null/undefined = none */
+  selected?: number | null;
 }>();
+
+const emit = defineEmits<{ select: [id: number] }>();
 
 const wrapperRef = ref<HTMLDivElement | null>(null);
 const canvasRef = ref<HTMLCanvasElement | null>(null);
+
+// One renderer, two data sources: an explicit fogged view, or the full galaxy expanded
+// into an omniscient view. Everything below draws purely from `view`.
+const view = computed<MapView | null>(() =>
+  props.view ?? (props.galaxy ? fullMapView(props.galaxy) : null),
+);
+
+const posById = computed(() => {
+  const m = new Map<number, { x: number; y: number }>();
+  for (const n of view.value?.sectors ?? []) m.set(n.id, { x: n.x, y: n.y });
+  return m;
+});
+
+// Map a canvas click to a known sector at that grid cell and emit it.
+function onClick(e: MouseEvent): void {
+  const canvas = canvasRef.value;
+  if (!canvas) return;
+  const size = canvas.clientWidth;
+  if (!size) return;
+  const rect = canvas.getBoundingClientRect();
+  const MARGIN = 16;
+  const CELL = (size - 2 * MARGIN) / SIDE;
+  const gx = Math.round((e.clientX - rect.left - MARGIN) / CELL - 0.5);
+  const gy = Math.round((e.clientY - rect.top - MARGIN) / CELL - 0.5);
+  for (const n of view.value?.sectors ?? []) {
+    if (n.x === gx && n.y === gy) {
+      emit('select', n.id);
+      return;
+    }
+  }
+}
 
 function draw() {
   const canvas = canvasRef.value;
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
+  const v = view.value;
 
   const size = canvas.clientWidth;
   if (!size) return;
@@ -31,52 +72,39 @@ function draw() {
   const px = (x: number) => MARGIN + (x + 0.5) * CELL;
   const py = (y: number) => MARGIN + (y + 0.5) * CELL;
 
-  const g = props.galaxy;
-  const lay = g.layout;
-  const live = (d: number) => g.dist[d] >= 0;
-
   ctx.fillStyle = '#070b14';
   ctx.fillRect(0, 0, size, size);
+  if (!v) return;
 
-  // Build open lane set and wormhole set
-  const whKeys = new Set(g.wormholes.map((w) => `${Math.min(w.a, w.b)}-${Math.max(w.a, w.b)}`));
-  const openLaneKeys = new Set<string>();
-  for (let d = 0; d < N; d++) {
-    for (const nd of g.adj[d]) {
-      const key = `${Math.min(d, nd)}-${Math.max(d, nd)}`;
-      if (!whKeys.has(key)) openLaneKeys.add(key);
-    }
-  }
-
-  // Danger gradient overlay
+  // Danger gradient overlay (per-node, works for fog + full)
   if (props.showGradient) {
-    for (let d = 0; d < N; d++) {
-      if (!live(d)) continue;
-      const { x, y } = lay.xy[d];
-      const dv = dangerCurve(g.sdist[d] / g.maxD);
+    for (const n of v.sectors) {
+      const dv = n.danger;
       ctx.fillStyle = `hsla(${135 - dv * 135}, 72%, ${50 - dv * 16}%, 0.28)`;
-      ctx.fillRect(MARGIN + x * CELL, MARGIN + y * CELL, CELL, CELL);
+      ctx.fillRect(MARGIN + n.x * CELL, MARGIN + n.y * CELL, CELL, CELL);
     }
   }
 
-  // Blocked lanes
-  if (props.showBlocked) {
+  // Blocked (closed) lanes — admin debug overlay, needs the full galaxy
+  const g = props.galaxy;
+  if (props.showBlocked && g) {
+    const whKeys = new Set(g.wormholes.map((w) => `${Math.min(w.a, w.b)}-${Math.max(w.a, w.b)}`));
     ctx.strokeStyle = '#3a2230';
     ctx.lineWidth = 0.7;
     ctx.setLineDash([2, 3]);
     ctx.beginPath();
-    for (let d = 0; d < N; d++) {
-      if (!live(d)) continue;
-      const { x, y } = lay.xy[d];
+    for (let d = 0; d < g.dist.length; d++) {
+      if (g.dist[d] < 0) continue;
+      const { x, y } = g.layout.xy[d];
       for (const [dx, dy] of [[1, 0], [0, 1]] as [number, number][]) {
         const nx = x + dx, ny = y + dy;
         if (nx >= SIDE || ny >= SIDE) continue;
-        const nd = lay.d[ny * SIDE + nx];
-        if (!live(nd)) continue;
+        const nd = g.layout.d[ny * SIDE + nx];
+        if (g.dist[nd] < 0) continue;
         const key = `${Math.min(d, nd)}-${Math.max(d, nd)}`;
-        if (!openLaneKeys.has(key)) {
+        if (!g.adj[d].includes(nd) || whKeys.has(key)) {
           ctx.moveTo(px(x), py(y));
-          ctx.lineTo(px(lay.xy[nd].x), py(lay.xy[nd].y));
+          ctx.lineTo(px(g.layout.xy[nd].x), py(g.layout.xy[nd].y));
         }
       }
     }
@@ -88,22 +116,23 @@ function draw() {
   ctx.strokeStyle = '#3f7e78';
   ctx.lineWidth = 1.1;
   ctx.beginPath();
-  for (const key of openLaneKeys) {
-    const i = key.indexOf('-');
-    const a = +key.slice(0, i);
-    const b = +key.slice(i + 1);
-    if (!live(a) || !live(b)) continue;
-    ctx.moveTo(px(lay.xy[a].x), py(lay.xy[a].y));
-    ctx.lineTo(px(lay.xy[b].x), py(lay.xy[b].y));
+  for (const e of v.edges) {
+    if (e.kind !== 'lane') continue;
+    const a = posById.value.get(e.a), b = posById.value.get(e.b);
+    if (!a || !b) continue;
+    ctx.moveTo(px(a.x), py(a.y));
+    ctx.lineTo(px(b.x), py(b.y));
   }
   ctx.stroke();
 
   // Wormholes (curved gold arcs)
   if (props.showWormholes) {
-    for (const w of g.wormholes) {
-      if (!live(w.a) || !live(w.b)) continue;
-      const x1 = px(lay.xy[w.a].x), y1 = py(lay.xy[w.a].y);
-      const x2 = px(lay.xy[w.b].x), y2 = py(lay.xy[w.b].y);
+    for (const e of v.edges) {
+      if (e.kind !== 'wormhole') continue;
+      const a = posById.value.get(e.a), b = posById.value.get(e.b);
+      if (!a || !b) continue;
+      const x1 = px(a.x), y1 = py(a.y);
+      const x2 = px(b.x), y2 = py(b.y);
       const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
       const dx = x2 - x1, dy = y2 - y1;
       ctx.strokeStyle = 'rgba(232,181,74,.38)';
@@ -116,35 +145,72 @@ function draw() {
   }
 
   // Sector dots
-  for (let d = 0; d < N; d++) {
-    if (!live(d)) continue;
-    const { x, y } = lay.xy[d];
-    const star = g.inhabited[d] === 1;
-    ctx.fillStyle = star ? '#cdd9ee' : '#26344d';
+  for (const n of v.sectors) {
+    if (n.id === 0) continue; // Sol drawn specially below
+    const cx = px(n.x), cy = py(n.y);
+    if (n.fog === 'frontier') {
+      ctx.fillStyle = '#1c2740';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 1.3, 0, Math.PI * 2);
+      ctx.fill();
+      continue;
+    }
+    ctx.fillStyle = n.inhabited ? '#cdd9ee' : '#26344d';
     ctx.beginPath();
-    ctx.arc(px(x), py(y), star ? 2.2 : 1.4, 0, Math.PI * 2);
+    ctx.arc(cx, cy, n.inhabited ? 2.2 : 1.4, 0, Math.PI * 2);
     ctx.fill();
+    // unexplored-wormhole marker
+    if (n.unexploredWormhole) {
+      ctx.strokeStyle = 'rgba(232,181,74,.7)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 3.6, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  // Selection ring (explorer)
+  if (props.selected != null && posById.value.has(props.selected)) {
+    const p = posById.value.get(props.selected)!;
+    ctx.strokeStyle = '#7fdbff';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(px(p.x), py(p.y), 6, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // "You are here"
+  if (props.current != null && posById.value.has(props.current)) {
+    const p = posById.value.get(props.current)!;
+    ctx.strokeStyle = '#9be37f';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(px(p.x), py(p.y), 4.5, 0, Math.PI * 2);
+    ctx.stroke();
   }
 
   // Sol marker
-  const cx0 = px(lay.xy[0].x), cy0 = py(lay.xy[0].y);
-  ctx.fillStyle = '#e8b54a';
-  ctx.beginPath();
-  ctx.arc(cx0, cy0, 3.2, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(232,181,74,.85)';
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  ctx.arc(cx0, cy0, 5.5, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.fillStyle = '#e8b54a';
-  ctx.font = `${Math.max(8, CELL * 0.55)}px monospace`;
-  ctx.textAlign = 'center';
-  ctx.fillText('Sol', cx0, cy0 - 8);
+  const sol = posById.value.get(0);
+  if (sol) {
+    const cx0 = px(sol.x), cy0 = py(sol.y);
+    ctx.fillStyle = '#e8b54a';
+    ctx.beginPath();
+    ctx.arc(cx0, cy0, 3.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(232,181,74,.85)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(cx0, cy0, 5.5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = '#e8b54a';
+    ctx.font = `${Math.max(8, CELL * 0.55)}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText('Sol', cx0, cy0 - 8);
+  }
 }
 
 watch(
-  () => [props.galaxy, props.showBlocked, props.showWormholes, props.showGradient] as const,
+  () => [props.galaxy, props.view, props.current, props.showBlocked, props.showWormholes, props.showGradient, props.selected] as const,
   () => draw(),
 );
 
@@ -159,7 +225,7 @@ onMounted(() => {
 <template>
   <div class="flex flex-col gap-3">
     <div ref="wrapperRef" class="relative aspect-square w-full rounded-xl overflow-hidden bg-[#070b14] border border-line">
-      <canvas ref="canvasRef" class="absolute inset-0 w-full h-full" style="cursor: crosshair" />
+      <canvas ref="canvasRef" class="absolute inset-0 w-full h-full" style="cursor: crosshair" @click="onClick" />
     </div>
 
     <!-- Legend -->
@@ -180,7 +246,6 @@ onMounted(() => {
         <span class="inline-block w-2 h-2 rounded-full bg-good"></span> calm →
         <span class="inline-block w-2 h-2 rounded-full bg-bad ml-0.5"></span> danger
       </span>
-      <span class="text-muted/60">blank = void</span>
     </div>
   </div>
 </template>

@@ -11,7 +11,9 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build-names": "node scripts/build-names.mjs",
+    "build-name-pools": "node scripts/build-name-pools.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.3",

@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>StarWonder — Player Map — ② Warp-Web (topological)</title>
+<style>
+  :root{
+    --bg:#0a0f1a; --panel:#111827; --panel2:#0d1422; --line:#1f2a3d;
+    --fg:#cdd9ee; --muted:#5d6b85; --accent:#5ad1c9; --accent2:#8a7bff;
+    --gold:#e8b54a; --bad:#ff6b81; --good:#5ad17a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#05080f;color:var(--fg);
+    font-family:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;}
+  .mono{font-family:"DejaVu Sans Mono",Menlo,Consolas,monospace;}
+  body{display:flex;justify-content:center;min-height:100vh;}
+  .phone{width:100%;max-width:420px;min-height:100vh;background:
+    radial-gradient(120% 80% at 50% -10%,#13203a 0,var(--bg) 55%);
+    position:relative;overflow:hidden;padding-bottom:60px;}
+  header{padding:14px 16px 6px;}
+  .loc{font-size:17px;font-weight:700;letter-spacing:.5px;}
+  .addr{font-size:11px;color:var(--muted);margin-top:2px;letter-spacing:.5px;}
+  .viewport{position:relative;margin:8px 14px 0;border:1px solid var(--line);border-radius:14px;
+    background:radial-gradient(70% 70% at 50% 45%,#0e1730,#070b14);overflow:hidden;height:420px;}
+  canvas#web{position:absolute;inset:0;width:100%;height:100%;cursor:pointer;}
+  .hint{position:absolute;left:0;right:0;bottom:8px;text-align:center;color:var(--muted);font-size:10px;pointer-events:none;}
+  .readout{padding:10px 16px;}
+  .readout .a{font-size:15px;font-weight:700;}
+  .readout .s{font-size:11px;color:var(--muted);margin-top:2px;}
+  .legend{display:flex;flex-wrap:wrap;gap:8px 14px;padding:2px 16px;font-size:10px;color:var(--muted);}
+  .legend span{display:flex;align-items:center;gap:5px;}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;}
+  .note{padding:6px 16px;color:var(--muted);font-size:10px;font-style:italic;opacity:.8;}
+  .reset{float:right;color:var(--muted);font-size:11px;cursor:pointer;text-decoration:underline;}
+  nav{position:fixed;left:50%;transform:translateX(-50%);bottom:0;width:100%;max-width:420px;
+    display:flex;background:#070b14;border-top:1px solid var(--line);}
+  nav a{flex:1;text-align:center;padding:9px 0 11px;font-size:10px;color:var(--muted);text-decoration:none;}
+  nav a .g{display:block;font-size:17px;margin-bottom:2px;}
+  nav a.on{color:var(--accent);}
+</style>
+</head>
+<body>
+<div class="phone">
+  <header>
+    <span class="reset" id="reset">↺ reset fog</span>
+    <div class="loc">Star Chart</div>
+    <div class="addr mono" id="addr">warp web · centred on your position</div>
+  </header>
+  <div class="viewport">
+    <canvas id="web"></canvas>
+    <div class="hint">tap a system to recentre · tap a <span style="color:var(--muted)">?</span> to fly there</div>
+  </div>
+  <div class="readout" id="readout"></div>
+  <div class="legend">
+    <span><i class="dot" style="background:var(--good)"></i> you</span>
+    <span><i class="dot" style="background:#cdd9ee"></i> system</span>
+    <span><i class="dot" style="background:#26344d"></i> waypoint</span>
+    <span><i class="dot" style="background:var(--gold)"></i> wormhole</span>
+    <span><i class="dot" style="border:1px dashed var(--muted);background:transparent"></i> unscanned</span>
+  </div>
+  <div class="note">No danger overlay — colour marks identity (system / waypoint / wormhole), not risk.</div>
+  <nav>
+    <a><span class="g">◉</span>Star</a>
+    <a class="on"><span class="g">◇</span>Map</a>
+    <a><span class="g">▣</span>Dock</a>
+    <a><span class="g">△</span>Ship</a>
+    <a><span class="g">≡</span>Log</a>
+  </nav>
+</div>
+
+<script>
+// ============ shared procedural galaxy engine (aurora seed, admin defaults) ============
+const SIDE=32, N=SIDE*SIDE;
+function fnv(s){let h=2166136261>>>0;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}
+  h^=h>>>16;h=Math.imul(h,0x85ebca6b);h^=h>>>13;h=Math.imul(h,0xc2b2ae35);h^=h>>>16;return h>>>0;}
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function d2xy(n,d){let rx,ry,t=d,x=0,y=0;for(let s=1;s<n;s*=2){rx=1&(t/2);ry=1&(t^rx);
+  if(ry===0){if(rx===1){x=s-1-x;y=s-1-y;}const tmp=x;x=y;y=tmp;}x+=s*rx;y+=s*ry;t=Math.floor(t/4);}return[x,y];}
+const XY=new Array(N), D=new Int32Array(N);
+(function pinwheel(){const H=SIDE/2;
+  const place=[(lx,ly)=>[H+lx,H+ly],(lx,ly)=>[H-1-lx,H+ly],(lx,ly)=>[H-1-lx,H-1-ly],(lx,ly)=>[H+lx,H-1-ly]];
+  for(let d=0;d<N;d++){const q=d>>8,local=d&255,[lx,ly]=d2xy(H,local),[x,y]=place[q](lx,ly);XY[d]={x,y};D[y*SIDE+x]=d;}})();
+const SEED='aurora', starProb=0.47, P=0.44, BIAS=0.89, WHN=50;
+const sol=XY[0]; const sdist=new Float64Array(N); let maxD=1e-9;
+for(let d=0;d<N;d++){const{x,y}=XY[d];const dd=Math.hypot(x-sol.x,y-sol.y);sdist[d]=dd;if(dd>maxD)maxD=dd;}
+const hasStar=new Uint8Array(N);
+for(let d=0;d<N;d++) hasStar[d]=(fnv(SEED+'|star|'+d)%100000)/100000<starProb?1:0; hasStar[0]=1;
+const laneAdj=Array.from({length:N},()=>[]);
+for(let d=0;d<N;d++){const{x,y}=XY[d];
+  for(const[nx,ny] of [[x+1,y],[x,y+1]]){ if(nx>=SIDE||ny>=SIDE) continue;
+    const nd=D[ny*SIDE+nx], lo=Math.min(d,nd), hi=Math.max(d,nd);
+    const t=((sdist[d]+sdist[nd])/2)/maxD; let pe=P*(1+BIAS*(0.5-t)); pe=Math.max(0,Math.min(1,pe));
+    if((fnv(SEED+'|lane|'+lo+'-'+hi)%100000)/100000<pe){laneAdj[d].push(nd);laneAdj[nd].push(d);} }}
+const wprng=mulberry32(fnv(SEED+'|wormholes')); const wormholes=[]; const whSet=new Set(); const minDist=SIDE*0.45;
+let guard=0; while(wormholes.length<WHN && guard++<WHN*60){
+  const a=(wprng()*N)|0,b=(wprng()*N)|0; if(a===b) continue;
+  const A=XY[a],B=XY[b]; if(Math.hypot(A.x-B.x,A.y-B.y)<minDist) continue;
+  const key=Math.min(a,b)+'-'+Math.max(a,b); if(whSet.has(key)) continue; whSet.add(key); wormholes.push({a,b});}
+const whBySector=new Map();
+for(const w of wormholes){ if(!whBySector.has(w.a))whBySector.set(w.a,[]); if(!whBySector.has(w.b))whBySector.set(w.b,[]);
+  whBySector.get(w.a).push(w); whBySector.get(w.b).push(w);}
+const SYL=['ve','dun','hal','le','xan','tor','cy','ra','mor','el','os','ari','bel','no','qui','tha','vor','sel','dra','ix','en','ka','lo','ti','sur','mi'];
+function sysName(d){if(d===0)return'Sol';const r=mulberry32(fnv(SEED+'|name|'+d));const n=2+((r()*2)|0);let s='';for(let i=0;i<n;i++)s+=SYL[(r()*SYL.length)|0];return s[0].toUpperCase()+s.slice(1);}
+function addrOf(d){return 'R'+((d>>6)+1)+' · #'+d;}
+
+// ============ fog ============
+let visited, frontier, takenWh, current;
+function recomputeFrontier(){
+  frontier=new Set();
+  for(const v of visited){ for(const n of laneAdj[v]) if(!visited.has(n)) frontier.add(n);
+    for(const w of (whBySector.get(v)||[])){ const far=w.a===v?w.b:w.a; if(!visited.has(far)) frontier.add(far); }}
+}
+function initFog(){
+  const rng=mulberry32(fnv(SEED+'|demo-fog-v2')); visited=new Set([0]); takenWh=new Set(); let g2=0;
+  while(visited.size<15 && g2++<4000){ const arr=[...visited]; const from=arr[(rng()*arr.length)|0];
+    const opts=laneAdj[from].filter(n=>!visited.has(n)); if(!opts.length) continue;
+    visited.add(opts[(rng()*opts.length)|0]); }
+  for(const v of visited){ const ws=whBySector.get(v)||[]; if(ws.length){ const w=ws[0]; const far=w.a===v?w.b:w.a;
+    visited.add(far); takenWh.add(Math.min(w.a,w.b)+'-'+Math.max(w.a,w.b)); break; }}
+  current=[...visited].reduce((best,d)=> sdist[d]>sdist[best]?d:best, 0);
+  recomputeFrontier();
+}
+
+// ============ radial-tree layout centred on `current`, BFS over KNOWN graph ============
+function knownNeighbors(d){
+  const out=[];
+  for(const n of laneAdj[d]) if(visited.has(n)||frontier.has(n)) out.push({to:n,wh:false});
+  for(const w of (whBySector.get(d)||[])){ const far=w.a===d?w.b:w.a;
+    const taken=takenWh.has(Math.min(w.a,w.b)+'-'+Math.max(w.a,w.b));
+    if(taken && visited.has(far)) out.push({to:far,wh:true}); }
+  return out;
+}
+const MAXD=3, R0=78;
+function layout(){
+  const pos=new Map(), depth=new Map(), edges=[];
+  pos.set(current,{x:0,y:0}); depth.set(current,0);
+  // assign angle sectors per node so children fan out around parent direction
+  const ang=new Map(); ang.set(current,0);
+  const span=new Map(); span.set(current,Math.PI*2);
+  const q=[current]; const seenEdge=new Set();
+  while(q.length){
+    const u=q.shift(); const du=depth.get(u);
+    if(du>=MAXD) continue;
+    const nbrs=knownNeighbors(u).filter(nb=>!pos.has(nb.to));
+    // record edges (also to already-placed for completeness)
+    for(const nb of knownNeighbors(u)){ const k=Math.min(u,nb.to)+'-'+Math.max(u,nb.to);
+      if(!seenEdge.has(k)){ seenEdge.add(k); edges.push({a:u,b:nb.to,wh:nb.wh}); }}
+    const baseAng=ang.get(u), baseSpan=span.get(u);
+    const n=nbrs.length;
+    nbrs.forEach((nb,i)=>{
+      const childSpan = du===0 ? Math.PI*2/Math.max(1,n) : baseSpan/Math.max(1,n);
+      const a = du===0 ? (i/Math.max(1,n))*Math.PI*2 : baseAng + (i-(n-1)/2)*childSpan*0.9;
+      const rad=(du+1)*R0;
+      pos.set(nb.to,{x:Math.cos(a)*rad, y:Math.sin(a)*rad});
+      depth.set(nb.to,du+1); ang.set(nb.to,a); span.set(nb.to,Math.max(0.5,childSpan));
+      q.push(nb.to);
+    });
+  }
+  return {pos,edges};
+}
+
+// ============ render ============
+const cv=document.getElementById('web'), ctx=cv.getContext('2d');
+let nodeScreen=[]; // {d,sx,sy,r}
+let pulse=0;
+function fit(){ const dpr=window.devicePixelRatio||1; const w=cv.clientWidth,h=cv.clientHeight;
+  cv.width=w*dpr; cv.height=h*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); return {w,h}; }
+function draw(){
+  const {w,h}=fit(); const {pos,edges}=layout();
+  const cxp=w/2, cyp=h/2;
+  ctx.clearRect(0,0,w,h);
+  // faint starfield
+  const sr=mulberry32(1234); ctx.save();
+  for(let i=0;i<70;i++){ ctx.globalAlpha=.15+sr()*.4; ctx.fillStyle='#9fd'; ctx.fillRect((sr()*w)|0,(sr()*h)|0,sr()<.1?2:1,1);} ctx.restore();
+  const P2S=p=>({x:cxp+p.x, y:cyp+p.y});
+  // edges
+  for(const e of edges){ const a=pos.get(e.a), b=pos.get(e.b); if(!a||!b) continue;
+    const A=P2S(a),B=P2S(b);
+    if(e.wh){ ctx.strokeStyle='rgba(232,181,74,.55)'; ctx.setLineDash([4,4]); ctx.lineWidth=1.4; }
+    else { ctx.strokeStyle='rgba(90,209,201,.35)'; ctx.setLineDash([]); ctx.lineWidth=1.4; }
+    ctx.beginPath(); ctx.moveTo(A.x,A.y); ctx.lineTo(B.x,B.y); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  // nodes
+  nodeScreen=[];
+  for(const [d,p] of pos){
+    const s=P2S(p); const fr=frontier.has(d)&&!visited.has(d); const star=hasStar[d]===1;
+    const hasWh=(whBySector.get(d)||[]).length>0;
+    let r, fill, ring=null, label=null, labelCol='#cdd9ee';
+    if(d===current){ r=9; fill='#9be37f'; ring='rgba(155,227,127,'; label=sysName(d); }
+    else if(d===0){ r=7; fill='var'; }   // Sol special below
+    else if(fr){ r=5; fill=null; }        // unscanned ring + ?
+    else if(star){ r=6; fill='#cdd9ee'; label=sysName(d); }
+    else { r=3.5; fill='#26344d'; }
+    // glow
+    if(fill && fill!=='var'){ const g=ctx.createRadialGradient(s.x,s.y,0,s.x,s.y,r*2.6);
+      g.addColorStop(0, hexA(fill,.5)); g.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.fillStyle=g; ctx.beginPath(); ctx.arc(s.x,s.y,r*2.6,0,7); ctx.fill(); }
+    if(fr){ ctx.strokeStyle='rgba(120,140,170,.7)'; ctx.setLineDash([2,3]); ctx.lineWidth=1.2;
+      ctx.beginPath(); ctx.arc(s.x,s.y,r,0,7); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle='#8a9bbd'; ctx.font='bold 11px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('?',s.x,s.y);
+    } else if(d===0){
+      ctx.fillStyle='#e8b54a'; ctx.beginPath(); ctx.arc(s.x,s.y,7,0,7); ctx.fill();
+      ctx.strokeStyle='rgba(232,181,74,.9)'; ctx.lineWidth=1.4; ctx.beginPath(); ctx.arc(s.x,s.y,11,0,7); ctx.stroke();
+      label='Sol'; labelCol='#e8b54a';
+    } else {
+      ctx.fillStyle=fill; ctx.beginPath(); ctx.arc(s.x,s.y,r,0,7); ctx.fill();
+      if(hasWh){ ctx.strokeStyle='rgba(232,181,74,.85)'; ctx.lineWidth=1.3; ctx.beginPath(); ctx.arc(s.x,s.y,r+3,0,7); ctx.stroke(); }
+    }
+    if(d===current){
+      const pr=11+Math.sin(pulse)*2.5;
+      ctx.strokeStyle='rgba(155,227,127,'+(0.7+0.3*Math.sin(pulse))+')'; ctx.lineWidth=1.6;
+      ctx.beginPath(); ctx.arc(s.x,s.y,pr,0,7); ctx.stroke();
+    }
+    if(label){ ctx.fillStyle=labelCol; ctx.font='11px Inter, sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+      ctx.fillText(label, s.x, s.y+ (d===current?14:9)); }
+    nodeScreen.push({d, sx:s.x, sy:s.y, r:Math.max(r,10), fr});
+  }
+}
+function hexA(hex,a){ if(hex[0]!=='#') return 'rgba(155,227,127,'+a+')';
+  const n=parseInt(hex.slice(1),16); const r=(n>>16)&255,g=(n>>8)&255,b=n&255; return 'rgba('+r+','+g+','+b+','+a+')'; }
+function setReadout(d){
+  const el=document.getElementById('readout');
+  const ws=(whBySector.get(d)||[]);
+  let wl='';
+  for(const w of ws){ const far=w.a===d?w.b:w.a; const taken=takenWh.has(Math.min(w.a,w.b)+'-'+Math.max(w.a,w.b));
+    wl+='<div class="s">◌ wormhole → '+(visited.has(far)?sysName(far):'uncharted')+' · 3⚡'+(taken?'':' · <span style="color:var(--gold)">exit unknown</span>')+'</div>'; }
+  el.innerHTML='<div class="a">'+(d===0?'★ ':'')+sysName(d)+'</div>'
+    +'<div class="s mono">'+addrOf(d)+(hasStar[d]?' · system':' · deep-space waypoint')+(d===current?' · you are here':'')+'</div>'+wl;
+  document.getElementById('addr').textContent=sysName(current)+' · '+addrOf(current)+' · '+visited.size+' charted';
+}
+cv.addEventListener('click', e=>{
+  const rect=cv.getBoundingClientRect(); const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  let best=null,bd=1e9; for(const n of nodeScreen){ const dd=Math.hypot(n.sx-mx,n.sy-my); if(dd<bd){bd=dd;best=n;} }
+  if(!best||bd>26) return;
+  if(best.fr){ visited.add(best.d); current=best.d; recomputeFrontier(); }
+  else { current=best.d; }
+  setReadout(current);
+});
+document.getElementById('reset').addEventListener('click', ()=>{ initFog(); setReadout(current); });
+initFog(); setReadout(current);
+(function loop(){ pulse+=0.08; draw(); requestAnimationFrame(loop); })();
+window.addEventListener('resize', draw);
+</script>
+</body>
+</html>

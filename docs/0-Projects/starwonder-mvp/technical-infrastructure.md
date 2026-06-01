@@ -194,7 +194,7 @@ flexible blobs we never query *inside*. Names indicative; tune as you build.
 ### Galaxy = seed + settings + sparse overrides (key decision)
 
 The galaxy is **not materialised** row-by-row. A universe is a **seed plus generation
-settings**; every sector's *baseline* (coords, region, habitation overlay, lane open/blocked,
+settings**; every sector's *baseline* (coords, habitation overlay, lane open/blocked,
 wormhole endpoints, initial station/planet class, initial NPC seeds) is a **pure function of
 `(seed, settings, sector_id)`** computed in `game-core` on demand (§11). The DB stores only:
 
@@ -233,7 +233,7 @@ events         (id PK, ts, kind, actor, target, sector_id, payload_json,
                 irc_announced, severity)     -- backbone of the live feed + IRC
 ```
 
-- **Derived, never stored:** sector coords/region, habitation, **lanes** (hash of `seed·min-max`,
+- **Derived, never stored:** sector coords, habitation, **lanes** (hash of `seed·min-max`,
   core-bias-tilted), **wormholes** (seeded), danger, initial station/planet/NPC layout. A "read
   sector" = compute baseline from `(seed, settings)`, then apply its override rows if any exist.
 - **`events` is central:** every interesting state change writes one. Clients poll/subscribe for
@@ -299,7 +299,7 @@ of `(seed, settings, sector_id)` — and is now implemented and unit-tested (it 
 `map-admin.html` mockup bit-for-bit, sharing the same hash keys):
 
 1. **Pinwheel layout** → four order-4 Hilbert curves meeting at the centre, so **Sol = Sector
-   #0** is dead-centre; gives each sector its `(x,y)`, region (1–16), and arm.
+   #0** is dead-centre; gives each sector its `(x,y)` and arm.
 2. **Habitation overlay** — a per-sector probability roll (`inhabitedProb`) marks each sector
    **inhabited** (a settled star system) or **uninhabited** (empty deep space); uninhabited
    sectors stay travellable waypoints.
@@ -315,7 +315,10 @@ of `(seed, settings, sector_id)` — and is now implemented and unit-tested (it 
    Peaceful → Medium → Dangerous → Very dangerous (inner ⅓ / middle ⅓ / next ⅙ / outer ⅙).
    Drives later spawn/loot/economy risk; the frontier is lucrative *and* lethal.
 7. **Stations / planets / NPC spawns** — placed by sector/star type from the seed (probabilities
-   are admin settings), with a guaranteed safe **home Haven at/near Sol**.
+   are admin settings), with a guaranteed safe **home Haven at/near Sol**. Planets and stations
+   also get **procedural names** (the planet is the system's identity; the station has its own,
+   from a weighted grammar over place/surname/first-name/descriptive pools — only ~10% reuse the
+   host world) — see [Procedural Naming](naming-system.md).
 8. **Acceptance check** — unreachable cells are *void by definition* (not a seed to reject), so
    the only screen is **size**: ensure Sol's reachable set is large enough to be a galaxy (a
    pathological seed could strand Sol in a tiny pocket). The admin readout/seed-finder surfaces
@@ -403,9 +406,8 @@ schema change, and lets us turn the gate off.
 
 ## 15. Open questions / risks
 
-1. **Sol habitation** — the generator currently doesn't force Sol (#0) to be inhabited, so for
-   some seeds the home sector is "uninhabited." Likely want to **force `inhabited[0]=1`** (and a
-   home Haven) — decide and update `game-core` + the mockup together.
+1. ~~**Sol habitation**~~ — *resolved.* `game-core` forces `inhabited[0]=1`, and
+   `generatePlanet`/`generateStation` special-case Sol → **Earth** / **Terra Station**.
 2. **Auth upgrade path** — when do we move off the gate password to AfterNET accounts / OAuth /
    SAML? (Schema seam is already in place.)
 3. **World tick** — needed for MVP, or defer until there's a living economy? (Lazy Energy regen

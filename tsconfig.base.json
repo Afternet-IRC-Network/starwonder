@@ -12,6 +12,11 @@
     "noEmit": true,
     "sourceMap": true,
     "declaration": false,
-    "verbatimModuleSyntax": false
+    "verbatimModuleSyntax": false,
+    "baseUrl": ".",
+    "paths": {
+      "@starwonder/game-core": ["packages/game-core/src/index.ts"],
+      "@starwonder/shared": ["packages/shared/src/index.ts"]
+    }
   }
 }
