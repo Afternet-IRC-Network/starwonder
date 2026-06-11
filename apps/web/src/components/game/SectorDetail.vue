@@ -42,7 +42,7 @@ const s = computed(() => props.sector);
         </span>
       </div>
 
-      <!-- The exact same screen players see in #star -->
+      <!-- The exact same screen players see in #sector -->
       <OrbitPanel :sector="s" />
 
       <!-- Footer facts — admin debug detail -->

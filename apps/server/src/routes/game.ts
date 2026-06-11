@@ -7,9 +7,11 @@ import {
   generateMarket,
   fogView,
   wormholeExitsAt,
+  wormholeCost,
   spendEnergy,
   DEFAULT_ENERGY,
   N,
+  type WormholeCostOpts,
 } from '@starwonder/game-core';
 import { moveInput, tradeInput, type ShipData } from '@starwonder/shared';
 import { db, schema } from '../db';
@@ -30,6 +32,41 @@ function allWormholeKeys(g: World['galaxy']): Set<string> {
   return new Set(g.wormholes.map((w) => whKey(w.a, w.b)));
 }
 
+// Live wormhole-cost curve from the config knobs (span → energy, soft-capped).
+function whCostOpts(): WormholeCostOpts {
+  return { perDist: getConfig('wormhole_cost_per_dist'), cap: getConfig('wormhole_cost_cap') };
+}
+
+// The other traders parked in a sector right now — the "also here" roster. `exclude` drops
+// the viewing trader (who's already represented by the orbit viewport); null shows everyone
+// (the omniscient admin/anon case). Ship look is derived client-side from the name.
+function tradersAt(sectorId: number, exclude: number | null): { id: number; name: string }[] {
+  return db
+    .select({ id: schema.traders.id, name: schema.traders.name })
+    .from(schema.traders)
+    .where(eq(schema.traders.currentSector, sectorId))
+    .all()
+    .filter((t) => t.id !== exclude)
+    .map((t) => ({ id: t.id, name: t.name }));
+}
+
+// sectorId → count of traders present, for the map's "players here" marker. `visited` limits
+// it to charted space (no fog leak); `exclude` drops the viewer. Pass null for both to tally
+// every trader across the whole galaxy (admin view).
+function presenceCounts(visited: Set<number> | null, exclude: number | null): Record<number, number> {
+  const rows = db
+    .select({ id: schema.traders.id, sector: schema.traders.currentSector })
+    .from(schema.traders)
+    .all();
+  const out: Record<number, number> = {};
+  for (const r of rows) {
+    if (r.id === exclude) continue;
+    if (visited && !visited.has(r.sector)) continue;
+    out[r.sector] = (out[r.sector] ?? 0) + 1;
+  }
+  return out;
+}
+
 // The authoritative sector payload: computed baseline + content + trader-aware exits, with
 // any sector_state override merged on top. `taken` is the set of wormhole keys the viewer
 // knows the far end of (all of them, for an admin / omniscient viewer).
@@ -40,6 +77,7 @@ function buildSector(
   id: number,
   taken: Set<string>,
   known: Set<number> | null = null,
+  selfTraderId: number | null = null,
 ): Record<string, unknown> {
   const g = world.galaxy;
   const seed = world.settings.seed;
@@ -54,7 +92,7 @@ function buildSector(
       })
     : undefined;
 
-  const wormholeExits = wormholeExitsAt(g, id, taken);
+  const wormholeExits = wormholeExitsAt(g, id, taken, whCostOpts());
 
   // Per-lane nav chips: visited neighbours reveal their world (name + look); unvisited ones
   // are just "?" + id. No fog leak — the id is already in `neighbors`, and a planet's
@@ -69,10 +107,11 @@ function buildSector(
   });
 
   const { wormholes: _drop, ...rest } = base; // players never get the raw destination list
+  const traders = tradersAt(id, selfTraderId); // who else is parked here
 
   const override = db.select().from(schema.sectorState).where(eq(schema.sectorState.sectorId, id)).get();
   if (!override) {
-    return { ...rest, wormholeExits, lanes, planet, station, market };
+    return { ...rest, wormholeExits, lanes, planet, station, market, traders };
   }
 
   const { planet: pOvr, station: sOvr, ...topOvr } = override.data as Record<string, unknown>;
@@ -83,6 +122,7 @@ function buildSector(
     planet: planet ? { ...planet, ...((pOvr as object) ?? {}) } : undefined,
     station: station ? { ...station, ...((sOvr as object) ?? {}) } : undefined,
     market,
+    traders,
     ...topOvr,
   };
 }
@@ -91,10 +131,8 @@ export async function gameRoutes(app: FastifyInstance): Promise<void> {
   // Public: just whether a world exists + the (non-secret) movement costs for the UI.
   app.get('/api/universe', async () => {
     const w = getWorld();
-    return {
-      exists: w !== null,
-      costs: { move: getConfig('move_energy_cost'), wormhole: getConfig('wormhole_energy_cost') },
-    };
+    // Lane cost is flat; wormhole cost is per-span, so it rides each exit/edge instead.
+    return { exists: w !== null, costs: { move: getConfig('move_energy_cost') } };
   });
 
   // The fogged player map — only what the active trader has seen.
@@ -103,7 +141,10 @@ export async function gameRoutes(app: FastifyInstance): Promise<void> {
     if (!w) return reply.code(503).send({ error: 'no universe' });
     const trader = loadActiveTrader(await getSession(req));
     if (!trader) return reply.code(409).send({ error: 'no active trader' });
-    return fogView(w.galaxy, visitedSet(trader.id), takenWormholes(trader.id));
+    const visited = visitedSet(trader.id);
+    const view = fogView(w.galaxy, visited, takenWormholes(trader.id), whCostOpts());
+    // Where other traders are, limited to charted space so the fog isn't leaked.
+    return { ...view, presence: presenceCounts(visited, trader.id) };
   });
 
   // Trader-aware sector detail. Admins and the anonymous/no-trader case see everything;
@@ -133,7 +174,8 @@ export async function gameRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const taken = full ? allWormholeKeys(w.galaxy) : takenWormholes(trader!.id);
-    return buildSector(w, id, taken, known);
+    // Omniscient viewers (admin/anon) see every trader; a player's own ship is excluded.
+    return buildSector(w, id, taken, known, full ? null : trader!.id);
   });
 
   // ── Intents ────────────────────────────────────────────────────────────────
@@ -175,7 +217,9 @@ export async function gameRoutes(app: FastifyInstance): Promise<void> {
       viaWormhole = true;
     }
 
-    const cost = viaWormhole ? getConfig('wormhole_energy_cost') : getConfig('move_energy_cost');
+    const cost = viaWormhole
+      ? wormholeCost(g, current, dest, whCostOpts())
+      : getConfig('move_energy_cost');
     const spent = spendEnergy({ value: trader.energy, updatedAt: trader.energyUpdatedAt }, cost);
     if (!spent) return reply.code(402).send({ error: 'not enough energy' });
 
@@ -208,10 +252,11 @@ export async function gameRoutes(app: FastifyInstance): Promise<void> {
         currentSector: dest,
         energy: spent.value,
         energyCap: DEFAULT_ENERGY.cap,
+        energyUpdatedAt: spent.updatedAt,
         credits: trader.credits,
         ship: shipOf(trader),
       },
-      sector: buildSector(w, dest, taken, visitedSet(trader.id)),
+      sector: buildSector(w, dest, taken, visitedSet(trader.id), trader.id),
     };
   });
 

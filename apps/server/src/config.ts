@@ -15,12 +15,13 @@ interface ConfigSpec {
 }
 
 export const CONFIG_SPEC = {
-  trader_cap:           { type: 'int',   default: 5,    description: 'Maximum traders per user' },
-  move_energy_cost:     { type: 'int',   default: 1,    description: 'Energy spent per lane jump' },
-  wormhole_energy_cost: { type: 'int',   default: 1,    description: 'Energy spent per wormhole jump' },
-  gradient_strength:    { type: 'float', default: 0.5,  description: 'Core↔rim price tilt (k)' },
-  trade_spread:         { type: 'float', default: 0.10, description: 'Buy/sell margin fraction' },
-  default_hold_size:    { type: 'int',   default: 20,   description: 'Starting cargo hold size (tons)' },
+  trader_cap:             { type: 'int',   default: 5,    description: 'Maximum traders per user' },
+  move_energy_cost:       { type: 'int',   default: 1,    description: 'Energy spent per lane jump' },
+  wormhole_cost_per_dist: { type: 'float', default: 1.0,  description: 'Wormhole energy per unit span (short-jump rate)' },
+  wormhole_cost_cap:      { type: 'int',   default: 20,   description: 'Wormhole energy soft cap (long-jump ceiling)' },
+  gradient_strength:      { type: 'float', default: 0.5,  description: 'Core↔rim price tilt (k)' },
+  trade_spread:           { type: 'float', default: 0.10, description: 'Buy/sell margin fraction' },
+  default_hold_size:      { type: 'int',   default: 20,   description: 'Starting cargo hold size (tons)' },
 } as const satisfies Record<string, ConfigSpec>;
 
 export type ConfigKey = keyof typeof CONFIG_SPEC;

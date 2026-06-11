@@ -1,7 +1,7 @@
 /**
  * Shared procedural pixel/voxel-planet renderer — ported from d-modern-voxel.html.
  *
- * Used by both the star viewport (one big planet) and the star chart map (many tiny
+ * Used by both the sector viewport (one big planet) and the star chart map (many tiny
  * cached sprites). Seed a planet with `addr(id)` ("Sector #N") and its server-provided
  * `palette`/`spin` so the same world looks identical wherever it's drawn.
  */

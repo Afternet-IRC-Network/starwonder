@@ -107,6 +107,7 @@ export function buildMe(uid: number, activeTraderId: number | null): MeResponse 
       credits: active.credits,
       energy: e.value,
       energyCap: DEFAULT_ENERGY.cap,
+      energyUpdatedAt: e.updatedAt,
       currentSector: active.currentSector,
       ship: shipOf(active),
     };

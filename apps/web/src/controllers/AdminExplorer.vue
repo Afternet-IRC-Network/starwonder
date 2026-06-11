@@ -4,10 +4,11 @@ import {
   generateGalaxy, sectorView, generatePlanet, generateStation,
   WORLD_CLASS_INFO, N, type Galaxy,
 } from '@starwonder/game-core';
-import { api, type SectorView, type AdminUniverseInfo } from '../api';
+import { api, type SectorView, type AdminUniverseInfo, type PresenceMap } from '../api';
 import GalaxyMap from '../components/admin-big-bang/GalaxyMap.vue';
 import SectorDetail from '../components/game/SectorDetail.vue';
 import ConfigPanel from '../components/admin/ConfigPanel.vue';
+import UsersPanel from '../components/admin/UsersPanel.vue';
 import AdminBigBang from './AdminBigBang.vue';
 
 // Bubbled up so the app can refresh player state after a regenerate (everyone is reset).
@@ -16,6 +17,7 @@ const emit = defineEmits<{ 'universe-changed': [] }>();
 // ── Universe + galaxy (computed client-side from the active universe's settings) ──
 const universe = ref<AdminUniverseInfo | null>(null);
 const galaxy = ref<Galaxy | null>(null);
+const presence = ref<PresenceMap>({}); // sectorId → trader count, for the map's blue markers
 const loadError = ref('');
 
 type Tier = SectorView['dangerTier'];
@@ -32,6 +34,9 @@ async function loadExplorer(): Promise<void> {
     universe.value = u;
     const g = generateGalaxy(u.settings);
     galaxy.value = g;
+
+    // Best-effort: trader positions for the map's "players here" markers (don't block the map).
+    api.adminPresence().then((p) => { presence.value = p.presence; }).catch(() => {});
 
     const out: Row[] = [];
     for (let id = 0; id < N; id++) {
@@ -65,7 +70,7 @@ async function onRegenerated(): Promise<void> {
 }
 
 // ── Selection (detail panel fetches authoritative server data, incl. overrides) ──
-const tab = ref<'map' | 'table' | 'generate' | 'settings'>('map');
+const tab = ref<'map' | 'table' | 'generate' | 'users' | 'settings'>('map');
 const selectedId = ref<number | null>(null);
 const selectedSector = ref<SectorView | null>(null);
 const loadingDetail = ref(false);
@@ -145,7 +150,7 @@ const sortArrow = (key: SortKey) =>
           {{ universe.reachable }} / {{ universe.size }} sectors reachable
         </p>
       </div>
-      <a href="#star" class="text-muted text-xs underline hover:text-fg transition-colors mt-1">← Back to game</a>
+      <a href="#sector" class="text-muted text-xs underline hover:text-fg transition-colors mt-1">← Back to game</a>
     </header>
 
     <p v-if="loadError" class="text-bad text-sm mb-4">{{ loadError }}</p>
@@ -153,7 +158,7 @@ const sortArrow = (key: SortKey) =>
     <!-- Tab switch -->
     <div class="inline-flex rounded-lg border border-line bg-panel p-0.5 mb-4">
       <button
-        v-for="t in (['map', 'table', 'generate', 'settings'] as const)" :key="t"
+        v-for="t in (['map', 'table', 'generate', 'users', 'settings'] as const)" :key="t"
         :class="['px-4 py-1.5 text-xs font-medium rounded-md capitalize transition-colors',
           tab === t ? 'bg-accent/15 text-accent' : 'text-muted hover:text-fg']"
         @click="tab = t"
@@ -167,6 +172,9 @@ const sortArrow = (key: SortKey) =>
       :universe-exists="true"
       @done="onRegenerated"
     />
+
+    <!-- USERS — accounts + the traders they run -->
+    <UsersPanel v-else-if="tab === 'users'" />
 
     <!-- SETTINGS — live operational config knobs -->
     <ConfigPanel v-else-if="tab === 'settings'" />
@@ -189,6 +197,7 @@ const sortArrow = (key: SortKey) =>
             :show-wormholes="showWormholes"
             :show-gradient="showGradient"
             :selected="selectedId"
+            :presence="presence"
             @select="select"
           />
         </template>

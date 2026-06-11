@@ -192,12 +192,42 @@ export function existingSectors(g: Galaxy): MapSector[] {
   return out;
 }
 
+// ── Wormhole energy cost ─────────────────────────────────────────────────────
+//
+// A wormhole's cost is its crow-flies span between mouths, softened so it stays the bargain
+// its length earns: ~linear (perDist·d) for a short span — so a short jump pays close to full
+// freight and isn't "helped" much — then bending toward `cap` for a long one so the price
+// never balloons. tanh gives exactly that shape (slope ≈ perDist at the origin, asymptote at
+// cap), and the result is always ≤ walking the same distance. Live-tunable from config.
+
+export interface WormholeCostOpts {
+  /** energy per unit crow-flies distance near the origin (the un-compressed short-jump rate) */
+  perDist: number;
+  /** the soft ceiling a long jump asymptotes toward */
+  cap: number;
+}
+
+export const DEFAULT_WORMHOLE_COST: WormholeCostOpts = { perDist: 1, cap: 20 };
+
+export function wormholeCost(
+  g: Galaxy,
+  a: number,
+  b: number,
+  opts: WormholeCostOpts = DEFAULT_WORMHOLE_COST,
+): number {
+  const A = g.layout.xy[a];
+  const B = g.layout.xy[b];
+  const d = Math.hypot(A.x - B.x, A.y - B.y);
+  return Math.max(1, Math.round(opts.cap * Math.tanh((opts.perDist * d) / opts.cap)));
+}
+
 // ── Per-trader map knowledge (fog of war) ───────────────────────────────────
 //
 // The map renderer (GalaxyMap.vue) draws from this normalized shape, fed either the full
-// galaxy (admin Explorer, omniscient) or a fogged subset (the player map). The fog is a
-// per-node brightness channel; the data simply never includes unknown sectors, so a
-// player client cannot see past it. Full design: docs/0-Projects/4_fog_of_war.md.
+// galaxy (admin Explorer, omniscient) or a fogged subset (the player map). A node is either
+// 'visited' (full content) or 'frontier' (a lane-neighbour of somewhere you've been, shown as
+// a bare "?" — existence only). Wormhole far-ends are NOT frontier: an untaken wormhole stays
+// a blind jump, its destination unknown until you take it. Full design: docs/0-Projects/4_fog_of_war.md.
 
 export type FogState = 'visited' | 'frontier';
 
@@ -239,6 +269,8 @@ export interface MapEdge {
   a: number;
   b: number;
   kind: 'lane' | 'wormhole';
+  /** energy to traverse — set for wormholes (span-based); lanes use the flat move cost */
+  cost?: number;
 }
 
 export interface MapView {
@@ -260,6 +292,7 @@ function buildEdges(
   laneFrom: Iterable<number>,
   whEdges: Set<string>,
   whShown: Set<string>,
+  whCost: WormholeCostOpts,
   knownLimit?: Set<number>,
 ): MapEdge[] {
   const out: MapEdge[] = [];
@@ -282,13 +315,18 @@ function buildEdges(
     if (!whShown.has(key)) continue;
     if (seen.has('W' + key)) continue;
     seen.add('W' + key);
-    out.push({ a: Math.min(w.a, w.b), b: Math.max(w.a, w.b), kind: 'wormhole' });
+    out.push({
+      a: Math.min(w.a, w.b),
+      b: Math.max(w.a, w.b),
+      kind: 'wormhole',
+      cost: wormholeCost(g, w.a, w.b, whCost),
+    });
   }
   return out;
 }
 
 // Omniscient map (admin Explorer): every existing sector + every open lane and wormhole.
-export function fullMapView(g: Galaxy): MapView {
+export function fullMapView(g: Galaxy, whCost: WormholeCostOpts = DEFAULT_WORMHOLE_COST): MapView {
   const whEdges = wormholeKeySet(g);
   const sectors: MapNode[] = [];
   const ids: number[] = [];
@@ -305,17 +343,23 @@ export function fullMapView(g: Galaxy): MapView {
       planet: mapPlanet(g, d),
     });
   }
-  return { size: N, sectors, edges: buildEdges(g, ids, whEdges, whEdges) };
+  return { size: N, sectors, edges: buildEdges(g, ids, whEdges, whEdges, whCost) };
 }
 
-// Fogged map for one trader: ONLY the sectors it has actually visited, plus the lanes
-// between them and the wormholes it has taken. There is no "frontier" pre-reveal — you find
-// out a sector exists, and what's there, only by travelling to it. (Your immediate exits are
-// still listed on the star screen by id, so you can always step into the unknown; you just
-// won't see it on the chart until you arrive — which is when the "new system" toast fires.)
-export function fogView(g: Galaxy, visited: Set<number>, taken: Set<string>): MapView {
+// Fogged map for one trader: every sector it has visited (full content), PLUS the lane-
+// neighbours of those sectors as bare "frontier" nodes — the edge of known space, shown as a
+// "?" you can fly to and chart. Wormhole far-ends are deliberately NOT revealed: an untaken
+// wormhole stays a blind jump (you learn where it goes only by taking it). So you can see the
+// open lanes leading out of charted space, but not where a warp gate drops you.
+export function fogView(
+  g: Galaxy,
+  visited: Set<number>,
+  taken: Set<string>,
+  whCost: WormholeCostOpts = DEFAULT_WORMHOLE_COST,
+): MapView {
   const whEdges = wormholeKeySet(g);
   const sectors: MapNode[] = [];
+  const frontier = new Set<number>();
   for (const v of visited) {
     if (g.dist[v] < 0) continue;
     const unexplored = g.adj[v].some(
@@ -331,20 +375,46 @@ export function fogView(g: Galaxy, visited: Set<number>, taken: Set<string>): Ma
       unexploredWormhole: unexplored,
       planet: mapPlanet(g, v),
     });
+    // Lane-neighbours we haven't been to become the frontier. A wormhole edge is skipped —
+    // its far end stays hidden until the jump is taken.
+    for (const n of g.adj[v]) {
+      if (g.dist[n] < 0 || visited.has(n)) continue;
+      if (whEdges.has(whKey(v, n))) continue;
+      frontier.add(n);
+    }
   }
-  // Edges only among visited sectors (+ taken wormholes) — never a stub to unexplored space.
-  return { size: N, sectors, edges: buildEdges(g, visited, whEdges, taken, new Set(visited)) };
+  for (const f of frontier) {
+    sectors.push({
+      id: f,
+      x: g.layout.xy[f].x,
+      y: g.layout.xy[f].y,
+      fog: 'frontier',
+      danger: dangerCurve(g.sdist[f] / g.maxD),
+    });
+  }
+  // Edges: lanes from visited sectors to visited OR frontier neighbours (never frontier↔
+  // frontier — `laneFrom` only walks visited), plus the wormholes this trader has taken.
+  const known = new Set(visited);
+  for (const f of frontier) known.add(f);
+  return { size: N, sectors, edges: buildEdges(g, visited, whEdges, taken, whCost, known) };
 }
 
 // Trader-aware exits at a sector: lanes (always visible) are just `neighbors`; this lists
-// the wormholes touching `id`, each with a stable `ref` (index into g.wormholes) and the
-// far end if the trader knows it. `to: null` ⇒ unexplored (blind jump via { wormhole: ref }).
+// the wormholes touching `id`, each with a stable `ref` (index into g.wormholes), the far end
+// if the trader knows it, and the energy cost. `to: null` ⇒ unexplored (blind jump via
+// { wormhole: ref }); the cost is the span, so it's known even before you know the destination.
 export interface WormholeExit {
   ref: number;
   to: number | null;
+  cost: number;
 }
 
-export function wormholeExitsAt(g: Galaxy, id: number, taken: Set<string>): WormholeExit[] {
+export function wormholeExitsAt(
+  g: Galaxy,
+  id: number,
+  taken: Set<string>,
+  whCost: WormholeCostOpts = DEFAULT_WORMHOLE_COST,
+): WormholeExit[] {
   const out: WormholeExit[] = [];
   for (let i = 0; i < g.wormholes.length; i++) {
     const w = g.wormholes[i];
@@ -352,7 +422,7 @@ export function wormholeExitsAt(g: Galaxy, id: number, taken: Set<string>): Worm
     const far = w.a === id ? w.b : w.a;
     if (g.dist[far] < 0) continue;
     const known = taken.has(whKey(w.a, w.b));
-    out.push({ ref: i, to: known ? far : null });
+    out.push({ ref: i, to: known ? far : null, cost: wormholeCost(g, w.a, w.b, whCost) });
   }
   return out;
 }

@@ -50,8 +50,11 @@ export interface ActiveTrader {
   id: number;
   name: string;
   credits: number;
+  /** energy settled to `energyUpdatedAt`; the client ticks it forward locally via currentEnergy() */
   energy: number;
   energyCap: number;
+  /** epoch ms of the last settle — lets the client compute live energy without a poll */
+  energyUpdatedAt: number;
   currentSector: number;
   ship: ShipData;
 }

@@ -3,18 +3,19 @@
  * Player star chart — the fog-of-war map as a voxel starfield (see mockup
  * map-player-3-starfield.html). Renders a server-authored `MapView` of the sectors the
  * trader has *visited*: inhabited ones as their actual pixel-planet, empties as waypoint
- * dots, lanes between them + taken wormholes as trails. There's no frontier pre-reveal —
- * unexplored space simply isn't on the chart (you find sectors by flying to them, via the
- * star screen's lane list). Drag to pan, scroll to zoom; a tap emits `select` so the parent
- * can show the sector panel. No danger overlay — that's server geometry, kept off the chart.
- * (The 'frontier' rendering branch below is dead for now but kept harmless/defensive.)
+ * dots, lanes between them + taken wormholes as trails. The lane-neighbours of visited space
+ * arrive as `fog: 'frontier'` "?" nodes — the edge of the known galaxy, which you can tap to
+ * plot a course at and fly into (wormhole far-ends stay hidden until taken, so they're never
+ * frontier). Drag to pan, scroll to zoom; a tap emits `select` so the parent can show the
+ * sector panel (or, for a frontier "?", just plot the route). No danger overlay — that's
+ * server geometry, kept off the chart.
  *
  * Distinct from the admin `GalaxyMap` (a technical scatter for debugging generation) on
  * purpose: this is the exploration experience. The sector *panel* under it still reuses the
  * shared `OrbitPanel`, so "what's in this sector" stays single-sourced.
  */
 import { ref, watch, onMounted, onUnmounted } from 'vue';
-import type { MapView } from '../../api';
+import type { MapView, PresenceMap } from '../../api';
 import { planetSprite } from './planet';
 
 const props = defineProps<{
@@ -23,6 +24,8 @@ const props = defineProps<{
   selected: number | null;
   /** ordered sector ids of a plotted course (current → target) to highlight; [] = none */
   route?: number[];
+  /** sectorId → count of *other* traders parked there (drives the blue "players here" pip) */
+  presence?: PresenceMap;
 }>();
 const emit = defineEmits<{ select: [id: number] }>();
 
@@ -161,6 +164,18 @@ function draw(): void {
     if (n.id === props.current) {
       const pr = 15 + Math.sin(pulse) * 2.5;
       ring(ctx, s.x, s.y, pr, `rgba(155,227,127,${0.75 + 0.25 * Math.sin(pulse)})`, 1.8);
+    }
+    // Other players parked here → a blue pip at the node's upper-right (count if >1).
+    const others = props.presence?.[n.id] ?? 0;
+    if (others > 0) {
+      const off = n.planet ? (n.id === 0 ? 13 : 10) : 6;
+      const px = s.x + off, py = s.y - off, pr = others > 1 ? 6.5 : 3.8;
+      ctx.fillStyle = 'rgba(91,140,255,.96)'; ctx.beginPath(); ctx.arc(px, py, pr, 0, 7); ctx.fill();
+      ctx.strokeStyle = 'rgba(10,18,40,.9)'; ctx.lineWidth = 1; ctx.stroke();
+      if (others > 1) {
+        ctx.fillStyle = '#eaf0ff'; ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(others), px, py);
+      }
     }
     nodeScreen.push({ id: n.id, sx: s.x, sy: s.y, fog: n.fog });
   }

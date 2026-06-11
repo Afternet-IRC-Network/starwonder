@@ -9,7 +9,7 @@
 
 - **In:** single-hop moves — click a warp → jump to one *adjacent* sector. Spend energy per jump.
   Record visited sectors and traversed wormholes. Hide un-taken wormhole destinations. The minimal
-  "warps" UI in the `#star` tab. And the authoritative **intent-handler + response template**.
+  "warps" UI in the `#sector` tab. And the authoritative **intent-handler + response template**.
 - **Out:** multi-hop route plotting / autopilot → **#5**. The fog-of-war *player map* and locking
   down galaxy knowledge → **#4**. Danger having consequences, interdiction → **#7 / #10**
   (here danger is display-only).
@@ -46,8 +46,11 @@ server-side and settles energy.
    only if that trader has taken it before. An unexplored wormhole shows that a wormhole *exists
    here* plus an opaque handle — never the destination ID. The **first traversal is a blind jump**;
    on arrival the destination is recorded and is thereafter visible from **both** ends.
-2. **Its own energy knob.** `wormhole_energy_cost`, separate from the lane cost — set to 1 for now,
-   but deliberately split so wormholes can feel different later.
+2. **Span-priced energy, separate from the lane cost.** A wormhole costs `cap · tanh(perDist · d /
+   cap)` over its crow-flies span `d` (knobs `wormhole_cost_per_dist` / `wormhole_cost_cap`):
+   ~linear for a short jump, softening to the cap for a long one, always ≤ walking it — so a
+   wormhole is the bargain its length earns. The cost is known even for an unexplored wormhole (it's
+   the span, not the destination), so it shows on the chip up front.
 
 This is why the move intent can't always be `{ to: sectorId }`: for an unexplored wormhole the
 client *doesn't have* the destination ID. So the per-trader sector view exposes exits as:
@@ -87,9 +90,10 @@ the wormhole links them. Knowledge is specifically "I took this wormhole."
 | key | type | default | notes |
 |---|---|---|---|
 | `move_energy_cost` | int | `1` | energy per lane jump |
-| `wormhole_energy_cost` | int | `1` | energy per wormhole jump (may diverge later) |
+| `wormhole_cost_per_dist` | float | `1.0` | wormhole energy per unit span (short-jump rate) |
+| `wormhole_cost_cap` | int | `20` | wormhole energy soft cap (long-jump ceiling) |
 
-Both live-tunable; both go in the item-0 config registry rather than being hardcoded.
+All live-tunable; all go in the item-0 config registry rather than being hardcoded.
 
 ## Server changes
 
@@ -105,7 +109,7 @@ Both live-tunable; both go in the item-0 config registry rather than being hardc
 - `SectorView` (the `api.ts` type) gains the `exits` shape above; `wormholes` stops being a bare
   destination-ID list for players.
 
-## Client / UI — the `#star` tab (`App.vue`)
+## Client / UI — the `#sector` tab (`App.vue`)
 
 - `jumpTo` → `move()`: `POST /api/move`, then update `me` (`energy` / `credits` / `currentSector`)
   and `sector` straight from the response — no extra round-trip.

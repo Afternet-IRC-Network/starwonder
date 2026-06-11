@@ -1,9 +1,10 @@
 <script setup lang="ts">
 /**
- * A single warp-lane chip on the star screen. Shows what the trader knows about the
+ * A single warp-lane chip on the sector screen. Shows what the trader knows about the
  * destination: a tiny pixel-planet + name for a visited world, a dim dot for a visited
- * deep-space waypoint, or a "?" for somewhere not yet charted. The sector id is always
- * shown; energy isn't (every lane costs the same — it's in the HUD and gates the button).
+ * deep-space waypoint, or a bare "?" / "Unknown" for somewhere not yet charted — an
+ * uncharted lane reveals nothing (not even its sector id) until you fly it. Energy isn't
+ * shown (every lane costs the same — it's in the HUD and gates the button).
  */
 import { ref, watch, onMounted } from 'vue';
 import type { LaneView } from '../../api';
@@ -46,9 +47,12 @@ onMounted(paint);
       <div class="text-xs font-semibold truncate" :class="{ 'text-muted': !lane.visited }">
         <template v-if="lane.planet">{{ lane.planet.name }}</template>
         <template v-else-if="lane.visited">Deep space</template>
-        <template v-else>Unscanned</template>
+        <template v-else>Unknown</template>
       </div>
-      <div class="text-[10px] text-muted font-mono">#{{ lane.id }}</div>
+      <div class="text-[10px] text-muted font-mono">
+        <template v-if="lane.visited">#{{ lane.id }}</template>
+        <template v-else>uncharted lane</template>
+      </div>
     </div>
   </button>
 </template>

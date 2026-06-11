@@ -127,8 +127,8 @@ Tables: `world` (singleton, `CHECK (id = 1)`), `config` (key/value knobs — see
 - `apps/server/src/galaxy.ts` — in-process world cache (`getWorld`, `invalidateWorldCache`)
 - `apps/server/src/config.ts` — the `CONFIG_SPEC` registry + typed `getConfig`/`setConfig`/`allConfig` (missing key ⇒ default; upsert to override)
 - `apps/server/src/session.ts` — session claims (`{ uid, activeTraderId }`), cookie sign/clear, `loadActiveTrader`, `visitedSet`/`takenWormholes`, and `buildMe` (the reshaped `me`)
-- `apps/server/src/routes/game.ts` — public `/api/universe` (`{ exists, costs }` only), trader-aware `/api/sector/:id`, fogged `/api/map`, and the `/api/move` + `/api/trade` intents
-- `apps/server/src/routes/admin.ts` — `/api/admin/big-bang` / `clear` (write/wipe `world`, preserve `config`), `/api/admin/universe` (full seed+settings), `/api/admin/config` GET/PUT; all gated via `requireAdmin` (`users.isAdmin`)
+- `apps/server/src/routes/game.ts` — public `/api/universe` (`{ exists, costs }` only), trader-aware `/api/sector/:id` (incl. the `traders` "also here" roster), fogged `/api/map` (with `presence`: sectorId→count of other traders in charted space), and the `/api/move` + `/api/trade` intents
+- `apps/server/src/routes/admin.ts` — `/api/admin/big-bang` / `clear` (write/wipe `world`, preserve `config`), `/api/admin/universe` (full seed+settings), `/api/admin/users` (accounts + nested traders), `/api/admin/presence` (sectorId→trader count for the map), `/api/admin/config` GET/PUT; all gated via `requireAdmin` (`users.isAdmin`)
 - `apps/server/src/routes/auth.ts` — register / login / logout / me + trader create/select (gate password + argon2id + JWT cookie)
 - `apps/web/src/api.ts` — typed fetch wrappers for all server endpoints
 - `apps/web/src/App.vue` — hash router + auth gating + game shell (star/map/dock/ship/log tabs); HUD reads `me.activeTrader`
@@ -137,14 +137,15 @@ Tables: `world` (singleton, `CHECK (id = 1)`), `config` (key/value knobs — see
 - `apps/web/src/components/admin/ConfigPanel.vue` — admin Settings tab: view/edit the live `config` knobs
 - `apps/web/src/controllers/AdminExplorer.vue` — admin Galaxy Explorer (map + table browser)
 - `apps/web/src/components/game/OrbitViewport.vue` — the canvas viewport: planet (size scales with diameter, log-mapped — see `MIN_SCALE`), station wheel, and overlays (name top-left, world-type toast top-right, stats line bottom)
-- `apps/web/src/components/game/OrbitPanel.vue` — **the canonical sector screen**: `OrbitViewport` + the "In orbit" station card. Used verbatim by both the game `#star` tab (`App.vue`) and the admin inspector (`SectorDetail.vue`) — see the shared-presentation rule below
+- `apps/web/src/components/game/OrbitPanel.vue` — **the canonical sector screen**: `OrbitViewport` + the "In orbit" station card + an "Also here" roster of other traders parked in the sector (each with a `ShipIcon`). Used verbatim by both the game `#sector` tab (`App.vue`) and the admin inspector (`SectorDetail.vue`) — see the shared-presentation rule below
+- `apps/web/src/components/game/ship.ts` + `ShipIcon.vue` — procedural voxel-ship sprite (ported from mockup-d's `makeSprite`); a trader's hull + hue are a pure function of its name. Used by the "Also here" roster. (The blue "players here" map marker is drawn directly in `StarChart`/`GalaxyMap` from the `presence` map.)
 - `apps/web/src/components/game/SectorDetail.vue` — admin wrapper: `OrbitPanel` + a sector/danger header + a debug footer (grid, jumps, lanes)
 - `apps/web/src/components/admin-big-bang/GalaxyMap.vue` — the **shared** canvas map; renders a `MapView`, deriving a full one from a `galaxy` prop (admin) or taking a fogged `view` (player); clickable + `selected`/`current` rings
 
 ## Frontend & routing
 
 `App.vue` is a tiny **hash router** gated by auth state. Pages: `login`/`register`,
-`admin`, and game tabs `star`/`map`/`dock`/`ship`/`log`. `#admin` resolves to **two**
+`admin`, and game tabs `sector`/`map`/`dock`/`ship`/`log`. `#admin` resolves to **two**
 different admin screens depending on state: the **Big Bang** universe-setup wizard when no
 universe exists, or the **Galaxy Explorer** (browse the live universe by map / table / settings)
 once one does. The Explorer computes the galaxy **client-side** from `/api/admin/universe`'s
@@ -156,9 +157,9 @@ authoritative detail. When a world exists but the user has no active trader, the
 **Shared-presentation rule:** the admin tools exist to debug what players actually see, so
 admin screens must **reuse the exact same components** as the player UI, never a parallel
 layout. The whole "what's in this sector" view lives in **`OrbitPanel`** (→ `OrbitViewport`);
-both `#star` and `SectorDetail` render it unchanged. When changing how a sector looks, edit
+both `#sector` and `SectorDetail` render it unchanged. When changing how a sector looks, edit
 the shared component once — do **not** fork a separate admin version. UI mockups live in
-`docs/0-Projects/starwonder-mvp/mockups/` (`d-modern-voxel.html` is the `#star` reference;
+`docs/0-Projects/starwonder-mvp/mockups/` (`d-modern-voxel.html` is the `#sector` reference;
 `map-admin.html` the map). New player-facing UI should match the relevant mockup.
 
 ## Dev loop & gotchas
@@ -183,4 +184,4 @@ Design specs live under `docs/0-Projects/` (a PARA vault). Start here:
 - `starwonder-mvp/gameplay-overview.md` + `technical-infrastructure.md` — the game design and the system design.
 - `starwonder-mvp/world-generation.md` — world-class model (`CLASS_SPEC`); `naming-system.md` — planet/station naming.
 - `todo.md` — the live, checked-off task list (what's done, what's next); `trading.md` — the in-progress trade-system design.
-- `starwonder-mvp/mockups/*.html` — UI references (`d-modern-voxel.html` = `#star`, `map-admin.html` = map).
+- `starwonder-mvp/mockups/*.html` — UI references (`d-modern-voxel.html` = `#sector`, `map-admin.html` = map).

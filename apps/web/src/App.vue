@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import type { MeResponse, ShipData } from '@starwonder/shared';
-import { api, type SectorView, type UniverseInfo, type MapView } from './api';
+import { currentEnergy, DEFAULT_ENERGY } from '@starwonder/game-core';
+import { api, type SectorView, type UniverseInfo, type MapView, type PresenceMap } from './api';
 import AdminBigBang from './controllers/AdminBigBang.vue';
 import AdminExplorer from './controllers/AdminExplorer.vue';
 import OrbitPanel from './components/game/OrbitPanel.vue';
@@ -15,6 +16,7 @@ const me = ref<MeResponse | null>(null);
 const sector = ref<SectorView | null>(null);
 const universe = ref<UniverseInfo | null>(null);
 const mapView = ref<MapView | null>(null);
+const mapPresence = ref<PresenceMap>({}); // sectorId → count of other traders, for the blue map pips
 const booting = ref(true);
 
 const at = computed(() => me.value?.activeTrader ?? null);
@@ -37,10 +39,18 @@ function resetMapSelection() {
   travelError.value = '';
 }
 
+// Is this map node an unexplored frontier "?" (vs. a visited sector with real detail)?
+function isFrontier(id: number): boolean {
+  return mapView.value?.sectors.find((s) => s.id === id)?.fog === 'frontier';
+}
+
 function onMapSelect(id: number) {
   if (id === at.value?.currentSector) { resetMapSelection(); return; }
   mapSelected.value = id;
   mapDetail.value = null;
+  travelError.value = '';
+  // A frontier "?" has no charted detail to fetch — just select it so a course can be plotted.
+  if (isFrontier(id)) { mapDetailLoading.value = false; return; }
   mapDetailLoading.value = true;
   api
     .sector(id)
@@ -57,16 +67,16 @@ function planRoute(
   view: MapView,
   from: number,
   to: number,
-  costs?: { move: number; wormhole: number },
+  moveCost = 1,
 ): { path: number[]; hops: number; energy: number } | null {
-  const move = costs?.move ?? 1;
-  const worm = costs?.wormhole ?? 1;
-  const adj = new Map<number, { to: number; kind: 'lane' | 'wormhole' }[]>();
+  // Lanes cost the flat move price; wormholes carry their own span-based cost on the edge.
+  const adj = new Map<number, { to: number; cost: number }[]>();
   const nodes = new Set<number>([from]);
   for (const e of view.edges) {
+    const cost = e.kind === 'wormhole' ? (e.cost ?? moveCost) : moveCost;
     nodes.add(e.a); nodes.add(e.b);
-    (adj.get(e.a) ?? adj.set(e.a, []).get(e.a)!).push({ to: e.b, kind: e.kind });
-    (adj.get(e.b) ?? adj.set(e.b, []).get(e.b)!).push({ to: e.a, kind: e.kind });
+    (adj.get(e.a) ?? adj.set(e.a, []).get(e.a)!).push({ to: e.b, cost });
+    (adj.get(e.b) ?? adj.set(e.b, []).get(e.b)!).push({ to: e.a, cost });
   }
   const dist = new Map<number, number>([[from, 0]]);
   const prev = new Map<number, number>();
@@ -80,8 +90,8 @@ function planRoute(
     }
     if (u === -1 || u === to) break;
     done.add(u);
-    for (const { to: v, kind } of adj.get(u) ?? []) {
-      const nd = best + (kind === 'wormhole' ? worm : move);
+    for (const { to: v, cost } of adj.get(u) ?? []) {
+      const nd = best + cost;
       if (nd < (dist.get(v) ?? Infinity)) { dist.set(v, nd); prev.set(v, u); }
     }
   }
@@ -99,11 +109,11 @@ const route = computed<{ path: number[]; hops: number; energy: number } | null>(
   const target = mapSelected.value;
   if (target == null || !mapView.value || !at.value) return null;
   if (target === at.value.currentSector) return null;
-  return planRoute(mapView.value, at.value.currentSector, target, universe.value?.costs);
+  return planRoute(mapView.value, at.value.currentSector, target, universe.value?.costs.move);
 });
 const routePath = computed<number[]>(() => route.value?.path ?? []);
 const canAffordRoute = computed(
-  () => !!route.value && !!at.value && at.value.energy >= route.value.energy,
+  () => !!route.value && !!at.value && liveEnergy.value >= route.value.energy,
 );
 
 const traveling = ref(false);
@@ -115,33 +125,39 @@ async function travelRoute() {
   travelError.value = '';
   const t = me.value.activeTrader;
   let ok = true;
+  let arrival: SectorView | null = null;
+  let chartedDest = false;
   try {
     // Walk the course hop-by-hop; each move is validated server-side.
     for (let i = 1; i < r.path.length; i++) {
       const res = await api.move({ to: r.path[i] });
       t.currentSector = res.trader.currentSector;
       t.energy = res.trader.energy;
+      t.energyUpdatedAt = res.trader.energyUpdatedAt;
       t.credits = res.trader.credits;
       t.ship = res.trader.ship;
       sector.value = res.sector;
-      if (res.discovered) announceDiscovery(res.sector); // charting a frontier en route
+      arrival = res.sector;
+      chartedDest = res.discovered; // only the final hop's flag matters for the on-arrival toast
     }
   } catch (e) {
     travelError.value = (e as Error).message;
     ok = false;
   }
   // Fog grew as far as we got — refresh the chart either way.
-  try { mapView.value = await api.map(); } catch { /* keep stale view */ }
+  try { const m = await api.map(); mapView.value = m; mapPresence.value = m.presence; } catch { /* keep stale view */ }
   traveling.value = false;
   if (ok) {
     resetMapSelection();
-    navigate('star'); // arrived → drop back to the star screen at the destination
+    navigate('sector'); // arrived → drop back to the sector screen at the destination
+    // Toast fires for the sector you're actually looking at — never an unseen sector mid-route.
+    if (chartedDest && arrival) announceDiscovery(arrival);
   }
   // On failure: stay on the map so the route + error stay visible.
 }
 
 // ── Hash router ───────────────────────────────────────────────────────────────
-const GAME_TABS = ['star', 'map', 'dock', 'ship', 'log'] as const;
+const GAME_TABS = ['sector', 'map', 'ship', 'log'] as const;
 type GameTab = (typeof GAME_TABS)[number];
 const AUTH_PAGES = ['login', 'register'] as const;
 
@@ -171,7 +187,7 @@ const view = computed(() => {
 
 const mode = computed(() => (hash.value === 'register' ? 'register' : 'login'));
 const gameTab = computed<GameTab>(() =>
-  (GAME_TABS as readonly string[]).includes(hash.value) ? (hash.value as GameTab) : 'star',
+  (GAME_TABS as readonly string[]).includes(hash.value) ? (hash.value as GameTab) : 'sector',
 );
 
 // ── Navigation sync ───────────────────────────────────────────────────────────
@@ -183,7 +199,7 @@ watch(view, (newView, oldView) => {
     navigate('admin');
   } else if (newView === 'game' && oldView !== 'game') {
     if (!sector.value) loadGame();
-    if (!(GAME_TABS as readonly string[]).includes(hash.value)) navigate('star');
+    if (!(GAME_TABS as readonly string[]).includes(hash.value)) navigate('sector');
   }
 });
 
@@ -191,7 +207,9 @@ watch(view, (newView, oldView) => {
 watch([gameTab, view], async ([tab, v]) => {
   if (v === 'game' && tab === 'map' && !mapView.value) {
     try {
-      mapView.value = await api.map();
+      const m = await api.map();
+      mapView.value = m;
+      mapPresence.value = m.presence;
     } catch { /* ignore — shown as empty */ }
   }
 });
@@ -209,7 +227,7 @@ const moveError = ref('');
 const moving = ref(false);
 
 // "New sector charted" toast — fired on the *arrival event* (the move's `discovered` flag),
-// not the sector's visited state, so it never re-fires when you flip back to the Star tab.
+// not the sector's visited state, so it never re-fires when you flip back to the Sector tab.
 // Auto-dismisses; shows over the orbit viewport.
 const discovery = ref<string | null>(null);
 let discoveryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -230,6 +248,7 @@ async function move(body: { to: number } | { wormhole: number }) {
     const t = me.value.activeTrader;
     t.currentSector = res.trader.currentSector;
     t.energy = res.trader.energy;
+    t.energyUpdatedAt = res.trader.energyUpdatedAt;
     t.credits = res.trader.credits;
     t.ship = res.trader.ship;
     sector.value = res.sector;
@@ -248,6 +267,21 @@ function onTraded(trader: { credits: number; ship: ShipData }) {
   me.value.activeTrader.credits = trader.credits;
   me.value.activeTrader.ship = trader.ship;
 }
+
+// ── Dock modal ──────────────────────────────────────────────────────────────────
+// Reached by tapping a station's "In orbit" card (no more bottom-nav "dock" tab, since a
+// sector could host more than one station later). Always docks the trader's *current*
+// sector; leaving the sector closes it.
+const STATION_DESC: Record<string, string> = {
+  trade: 'Trade hub',
+  haven: 'Safe haven',
+  outpost: 'Frontier outpost',
+};
+const dockOpen = ref(false);
+function openDock() {
+  if (sector.value?.station) dockOpen.value = true;
+}
+watch(() => at.value?.currentSector, () => { dockOpen.value = false; });
 
 // ── Auth ────────────────────────────────────────────────────────────────────
 const username = ref('');
@@ -277,12 +311,13 @@ async function logout() {
   me.value = null;
   sector.value = null;
   mapView.value = null;
+  dockOpen.value = false;
 }
 
 async function onPilotReady(m: MeResponse) {
   me.value = m;
   await loadGame();
-  navigate('star');
+  navigate('sector');
 }
 
 async function onBigBangDone() {
@@ -315,13 +350,31 @@ onMounted(async () => {
   } else if (view.value === 'admin-explore') {
     // keep #admin
   } else if (view.value === 'game') {
-    if (!(GAME_TABS as readonly string[]).includes(hash.value)) navigate('star');
+    if (!(GAME_TABS as readonly string[]).includes(hash.value)) navigate('sector');
   }
 });
 
+// ── Live energy ─────────────────────────────────────────────────────────────────
+// Energy is a timestamp, not a timer (same model as the server): we hold the value the
+// server settled to `energyUpdatedAt` and recompute the current value locally on a clock
+// tick, so the bar refills on its own with no poll. Every action (move/travel) hands back a
+// fresh {energy, energyUpdatedAt}, re-anchoring the computation. `now` advances on an
+// interval; browsers pause it on a hidden tab, so it jumps to the real time on return — the
+// bar is correct the instant you look at it. The server stays authoritative on every spend.
+const now = ref(Date.now());
+let energyTimer: ReturnType<typeof setInterval> | null = null;
+onMounted(() => { energyTimer = setInterval(() => { now.value = Date.now(); }, 5000); });
+onUnmounted(() => { if (energyTimer) clearInterval(energyTimer); });
+
+const liveEnergy = computed(() =>
+  at.value
+    ? currentEnergy({ value: at.value.energy, updatedAt: at.value.energyUpdatedAt }, DEFAULT_ENERGY, now.value).value
+    : 0,
+);
+
 // ── Misc ──────────────────────────────────────────────────────────────────────
 const energyPct = computed(() =>
-  at.value ? Math.round((at.value.energy / at.value.energyCap) * 100) : 0,
+  at.value ? Math.round((liveEnergy.value / at.value.energyCap) * 100) : 0,
 );
 const holdUsed = computed(() =>
   at.value ? Object.values(at.value.ship.cargo).reduce((a, b) => a + b, 0) : 0,
@@ -431,7 +484,7 @@ const holdUsed = computed(() =>
       <div class="mt-3 flex items-center gap-3">
         <div class="flex-1">
           <div class="flex justify-between text-[11px] text-muted mb-1">
-            <span>Energy</span><span>{{ at.energy }} / {{ at.energyCap }}</span>
+            <span>Energy</span><span>{{ liveEnergy }} / {{ at.energyCap }}</span>
           </div>
           <div class="h-1.5 rounded-full bg-panel2 overflow-hidden">
             <div class="h-full bg-accent transition-all duration-300" :style="{ width: energyPct + '%' }" />
@@ -446,10 +499,10 @@ const holdUsed = computed(() =>
 
     <main class="flex-1 p-4 flex flex-col gap-4 overflow-y-auto">
 
-      <!-- Star tab -->
-      <template v-if="gameTab === 'star'">
+      <!-- Sector tab -->
+      <template v-if="gameTab === 'sector'">
         <div class="relative">
-          <OrbitPanel v-if="sector" :sector="sector" />
+          <OrbitPanel v-if="sector" :sector="sector" dockable @dock="openDock" />
           <div v-else class="h-[230px] rounded-2xl border border-line bg-[#080c16] grid place-items-center text-muted text-xs">
             loading…
           </div>
@@ -480,14 +533,14 @@ const holdUsed = computed(() =>
               v-for="lane in (sector.lanes ?? [])"
               :key="'l' + lane.id"
               :lane="lane"
-              :disabled="moving || at.energy < (universe?.costs.move ?? 1)"
+              :disabled="moving || liveEnergy < (universe?.costs.move ?? 1)"
               @go="move({ to: lane.id })"
             />
             <!-- Wormholes -->
             <button
               v-for="(w, i) in sector.wormholeExits"
               :key="'w' + i"
-              :disabled="moving || at.energy < (universe?.costs.wormhole ?? 1)"
+              :disabled="moving || liveEnergy < w.cost"
               class="flex-shrink-0 min-w-[108px] border rounded-xl p-3 text-left transition-colors disabled:opacity-40"
               style="background:#161226;border-color:#5a4a1e"
               @click="w.to != null ? move({ to: w.to }) : move({ wormhole: w.ref })"
@@ -496,7 +549,7 @@ const holdUsed = computed(() =>
                 <template v-if="w.to != null">◌ #{{ w.to }}</template>
                 <template v-else>◌ unknown</template>
               </div>
-              <div class="text-[10px] text-muted mt-1">{{ universe?.costs.wormhole ?? 1 }} ⚡ · wormhole</div>
+              <div class="text-[10px] text-muted mt-1">{{ w.cost }} ⚡ · wormhole</div>
             </button>
             <div v-if="!sector.neighbors.length && !sector.wormholeExits.length"
               class="flex-shrink-0 min-w-[108px] bg-panel2 border border-dashed border-line rounded-xl p-3">
@@ -516,13 +569,14 @@ const holdUsed = computed(() =>
           :current="at.currentSector"
           :selected="mapSelected"
           :route="routePath"
+          :presence="mapPresence"
           @select="onMapSelect"
         />
         <div v-else class="h-[268px] rounded-2xl border border-line bg-[#070b14] grid place-items-center text-muted text-xs">
           loading map…
         </div>
 
-        <!-- Selected sector — the shared sector view (minus "also here") -->
+        <!-- Selected sector — the shared sector view (incl. the "also here" roster) -->
         <template v-if="mapView">
           <div
             v-if="mapDetailLoading && !panelSector"
@@ -534,7 +588,15 @@ const holdUsed = computed(() =>
             <div class="text-[10px] uppercase tracking-[2px] text-muted mb-2 px-1">
               {{ panelSector.id === at.currentSector ? 'You are here' : 'Inspecting' }}
             </div>
-            <OrbitPanel :sector="panelSector" />
+            <OrbitPanel :sector="panelSector" :dockable="panelSector.id === at.currentSector" @dock="openDock" />
+          </div>
+          <div v-else-if="mapSelected != null && isFrontier(mapSelected)">
+            <div class="text-[10px] uppercase tracking-[2px] text-muted mb-2 px-1">Unexplored</div>
+            <div class="bg-panel border border-dashed border-line rounded-2xl p-5 text-center">
+              <div class="text-2xl text-muted font-bold leading-none mb-2">?</div>
+              <div class="text-sm font-semibold">Uncharted sector</div>
+              <p class="text-[11px] text-muted mt-1">Plot a course and fly there to discover what's waiting.</p>
+            </div>
           </div>
 
           <!-- Route to the selected sector — sibling of OrbitPanel, so it sits under "In orbit" -->
@@ -547,8 +609,8 @@ const holdUsed = computed(() =>
                     {{ route.hops }} hop{{ route.hops === 1 ? '' : 's' }} · {{ route.energy }} ⚡
                   </div>
                   <div class="text-[11px]" :class="canAffordRoute ? 'text-muted' : 'text-bad'">
-                    <template v-if="canAffordRoute">{{ at.energy }} ⚡ available</template>
-                    <template v-else>need {{ route.energy }} ⚡ · only {{ at.energy }} available</template>
+                    <template v-if="canAffordRoute">{{ liveEnergy }} ⚡ available</template>
+                    <template v-else>need {{ route.energy }} ⚡ · only {{ liveEnergy }} available</template>
                   </div>
                 </div>
                 <button
@@ -564,11 +626,6 @@ const holdUsed = computed(() =>
             </div>
           </div>
         </template>
-      </template>
-
-      <!-- Dock tab -->
-      <template v-else-if="gameTab === 'dock'">
-        <DockMarket v-if="sector" :sector="sector" :trader="at" @traded="onTraded" />
       </template>
 
       <!-- Ship tab -->
@@ -594,7 +651,7 @@ const holdUsed = computed(() =>
 
     </main>
 
-    <nav class="border-t border-line grid grid-cols-5 flex-shrink-0">
+    <nav class="border-t border-line grid grid-cols-4 flex-shrink-0">
       <button
         v-for="tab in GAME_TABS"
         :key="tab"
@@ -602,6 +659,41 @@ const holdUsed = computed(() =>
         @click="navigate(tab)"
       >{{ tab }}</button>
     </nav>
+
+    <!-- ── Dock modal ── opened by tapping a station; trades the current sector -->
+    <Transition
+      enter-active-class="transition duration-200 ease-out"
+      enter-from-class="opacity-0"
+      enter-to-class="opacity-100"
+      leave-active-class="transition duration-150 ease-in"
+      leave-to-class="opacity-0"
+    >
+      <div
+        v-if="dockOpen && sector?.station"
+        class="fixed inset-0 z-30 flex flex-col justify-end sm:justify-center bg-black/60 backdrop-blur-sm"
+        @click.self="dockOpen = false"
+      >
+        <div class="mx-auto w-full max-w-md bg-bg border-t sm:border border-line rounded-t-2xl sm:rounded-2xl flex flex-col max-h-[88vh] overflow-hidden shadow-2xl shadow-black/50">
+          <!-- Title bar -->
+          <header class="flex items-center gap-2.5 px-4 py-3 border-b border-line flex-shrink-0">
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-semibold truncate">{{ sector.station.name }}</div>
+              <div class="text-[11px] text-muted">
+                {{ STATION_DESC[sector.station.stationType] ?? 'Station' }} · marketplace
+              </div>
+            </div>
+            <button
+              class="w-8 h-8 -mr-1 grid place-items-center rounded-lg text-muted hover:text-fg hover:bg-panel2 transition-colors"
+              aria-label="Close dock"
+              @click="dockOpen = false"
+            >✕</button>
+          </header>
+          <div class="p-4 overflow-y-auto">
+            <DockMarket :sector="sector" :trader="at" @traded="onTraded" />
+          </div>
+        </div>
+      </div>
+    </Transition>
 
   </div>
 </template>

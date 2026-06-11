@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { SIDE, fullMapView, type Galaxy, type MapView } from '@starwonder/game-core';
+import type { PresenceMap } from '../../api';
 
 const props = defineProps<{
   /** admin: the full galaxy — enables the blocked-lane overlay and derives a full view */
@@ -14,6 +15,8 @@ const props = defineProps<{
   showGradient?: boolean;
   /** highlighted sector id (explorer); null/undefined = none */
   selected?: number | null;
+  /** sectorId → count of traders parked there (drives the blue "players here" marker) */
+  presence?: PresenceMap;
 }>();
 
 const emit = defineEmits<{ select: [id: number] }>();
@@ -169,6 +172,32 @@ function draw() {
     }
   }
 
+  // Players present — a blue marker over any sector with traders parked in it (count if >1).
+  if (props.presence) {
+    for (const [idStr, count] of Object.entries(props.presence)) {
+      if (!count) continue;
+      const p = posById.value.get(Number(idStr));
+      if (!p) continue;
+      const cx = px(p.x), cy = py(p.y);
+      ctx.fillStyle = 'rgba(91,140,255,.96)';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(91,140,255,.6)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 4.8, 0, Math.PI * 2);
+      ctx.stroke();
+      if (count > 1) {
+        ctx.fillStyle = '#9db4ff';
+        ctx.font = `bold ${Math.max(8, CELL * 0.5)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(count), cx + 7, cy - 6);
+      }
+    }
+  }
+
   // Selection ring (explorer)
   if (props.selected != null && posById.value.has(props.selected)) {
     const p = posById.value.get(props.selected)!;
@@ -210,7 +239,7 @@ function draw() {
 }
 
 watch(
-  () => [props.galaxy, props.view, props.current, props.showBlocked, props.showWormholes, props.showGradient, props.selected] as const,
+  () => [props.galaxy, props.view, props.current, props.showBlocked, props.showWormholes, props.showGradient, props.selected, props.presence] as const,
   () => draw(),
 );
 
@@ -241,6 +270,9 @@ onMounted(() => {
       </span>
       <span class="flex items-center gap-1.5">
         <span class="inline-block w-4 h-0.5 rounded" style="background:#e8b54a; opacity:.7"></span> wormhole
+      </span>
+      <span class="flex items-center gap-1.5">
+        <span class="inline-block w-2 h-2 rounded-full" style="background:#5b8cff"></span> players
       </span>
       <span class="flex items-center gap-1.5">
         <span class="inline-block w-2 h-2 rounded-full bg-good"></span> calm →

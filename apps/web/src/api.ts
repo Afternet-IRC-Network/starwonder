@@ -11,7 +11,7 @@ import type {
 
 export type { PlanetData, StationData, MapView, MapPlanet, MarketEntry, ShipData, MeResponse };
 
-/** A lane destination as the trader knows it — for the warp-lane chips on the star screen. */
+/** A lane destination as the trader knows it — for the warp-lane chips on the sector screen. */
 export interface LaneView {
   id: number;
   /** has the trader been to this neighbour before? */
@@ -41,6 +41,8 @@ export interface SectorView {
   planet?: PlanetData;
   station?: StationData;
   market?: MarketEntry[];
+  /** other traders parked in this sector right now — the "also here" roster */
+  traders?: TraderHere[];
   // DB overlay fields
   name?: string;
   systemName?: string;
@@ -48,9 +50,22 @@ export interface SectorView {
   special?: boolean;
 }
 
+/** A trader present in a sector — name seeds its ship-icon look client-side. */
+export interface TraderHere {
+  id: number;
+  name: string;
+}
+
+/** sectorId → count of traders present there (the map's "players here" marker). */
+export type PresenceMap = Record<number, number>;
+
+/** The player map: the fogged view plus where other traders are in charted space. */
+export type MapResponse = MapView & { presence: PresenceMap };
+
 export interface UniverseInfo {
   exists: boolean;
-  costs: { move: number; wormhole: number };
+  /** lane cost only — wormhole cost is per-span and rides each WormholeExit / MapEdge */
+  costs: { move: number };
 }
 
 export interface AdminUniverseInfo {
@@ -58,6 +73,26 @@ export interface AdminUniverseInfo {
   settings: GalaxySettings;
   reachable: number;
   size: number;
+}
+
+export interface AdminTrader {
+  id: number;
+  name: string;
+  credits: number;
+  energy: number;
+  energyCap: number;
+  currentSector: number;
+  holdUsed: number;
+  holdSize: number;
+  createdAt: number;
+}
+
+export interface AdminUser {
+  id: number;
+  username: string;
+  isAdmin: boolean;
+  createdAt: number;
+  traders: AdminTrader[];
 }
 
 export interface ConfigEntry {
@@ -71,7 +106,7 @@ export interface ConfigEntry {
 export interface MoveResult {
   /** true when this move was the trader's first-ever arrival at `sector` */
   discovered: boolean;
-  trader: { currentSector: number; energy: number; energyCap: number; credits: number; ship: ShipData };
+  trader: { currentSector: number; energy: number; energyCap: number; energyUpdatedAt: number; credits: number; ship: ShipData };
   sector: SectorView;
 }
 
@@ -118,7 +153,7 @@ export const api = {
 
   universe: () => fetch('/api/universe').then(json<UniverseInfo>),
   sector: (id: number) => fetch(`/api/sector/${id}`).then(json<SectorView>),
-  map: () => fetch('/api/map').then(json<MapView>),
+  map: () => fetch('/api/map').then(json<MapResponse>),
   move: (body: { to: number } | { wormhole: number }) => post('/api/move', body).then(json<MoveResult>),
   trade: (body: { action: 'buy' | 'sell'; commodity: string; qty: number }) =>
     post('/api/trade', body).then(json<TradeResult>),
@@ -134,6 +169,8 @@ export const api = {
     wormholeCount: number;
   }) => post('/api/admin/big-bang', b).then(json<AdminUniverseInfo>),
   clearUniverse: () => post('/api/admin/clear', {}).then(json<{ ok: boolean }>),
+  adminUsers: () => fetch('/api/admin/users').then(json<{ users: AdminUser[] }>),
+  adminPresence: () => fetch('/api/admin/presence').then(json<{ presence: PresenceMap }>),
   adminConfig: () => fetch('/api/admin/config').then(json<{ config: ConfigEntry[] }>),
   setConfig: (key: string, value: number) =>
     put('/api/admin/config', { key, value }).then(json<{ config: ConfigEntry[] }>),

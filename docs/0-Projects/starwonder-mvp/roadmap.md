@@ -13,6 +13,7 @@ is just the *someday / spicy* horizon — things deliberately past the current t
 - [ ] **Faction story chains** — authored questlines layered on the reputation system (todo #8).
 - [ ] **Ship insurance** — hedge the soft-loss on defeat.
 - [ ] **Richer IRC** — daily "Galactic News" digest and a deeper `!` command set, beyond the v1 bot (todo #16).
+- [ ] **Idle narrative** — AI-narrated docked downtime over a deterministic plugin sim (todo #8b). → [idle-narrative.md](idle-narrative.md)
 - [ ] **Realtime push** to clients instead of polling.
 
 ## Open tuning question

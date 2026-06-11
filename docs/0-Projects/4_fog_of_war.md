@@ -6,17 +6,22 @@
 > the seed is server-secret, so the two ship together. The per-trader *knowledge model* started
 > here is the same one **#5** (route/map intel) and **#11** (map sharing) extend.
 >
-> **⚠️ Revision (post-build): the frontier tier was dropped.** The original design lit up
-> visited sectors' lane-neighbours as dim "something's here" dots. In play that read as
-> confusing — a sector appeared "found" (a dot on the chart) *before* you travelled to it, which
-> fought with the "new system charted" arrival toast (especially when the dots popped at the far
-> end of a lane/wormhole you'd just taken). So `fogView` now returns **visited sectors only**
-> (plus the lanes between them and taken wormholes); there is no frontier pre-reveal. You still
-> see your immediate exits on the **star screen** (lane chips list the destination *ids* as `?`),
-> so you can always step into the unknown — you just learn what's there by arriving. The map
-> renderer is now `apps/web/src/components/game/StarChart.vue` (the voxel starfield), not the admin
-> `GalaxyMap`. Sections below that describe the "frontier" tier are kept for history but no longer
-> reflect the shipped behaviour.
+> **⚠️ Revision 1 (post-build): the frontier tier was dropped.** It was briefly cut — `fogView`
+> returned visited sectors only, with no frontier pre-reveal — because the early dots read as a
+> sector being "found" before you'd travelled there.
+>
+> **✅ Revision 2 (current): the frontier tier is back, as the original design below describes.**
+> `fogView` again lights up a visited sector's **lane**-neighbours as bare `fog: 'frontier'` "?"
+> nodes (existence + position only — never inhabited/station/planet), so the chart shows the edge
+> of known space and you can plot a course straight at the unknown. Two guardrails keep it from
+> fighting the arrival toast this time: (a) **wormhole far-ends are *not* frontier** — an un-taken
+> wormhole stays a blind jump (you learn its destination only by taking it); and (b) the **"new
+> system charted" toast fires on arrival** for the sector you actually land on (single moves, and
+> the final hop of a plotted route), so charting a `?` and seeing what's there stay distinct
+> moments. On the **sector screen**, an uncharted lane chip now shows a plain "Unknown / ?" with no
+> sector id. The map renderer is `apps/web/src/components/game/StarChart.vue` (the voxel
+> starfield); its `fog === 'frontier'` branch draws the dashed "?". The sections below describe the
+> reinstated behaviour.
 
 ## Scope
 

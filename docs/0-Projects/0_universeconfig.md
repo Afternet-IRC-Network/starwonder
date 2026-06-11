@@ -97,14 +97,18 @@ call sites get a real number. Adding a knob = editing that one table.
 |---|---|---|---|
 | `trader_cap` | int | `5` | max traders per user — enforced in #1 |
 | `move_energy_cost` | int | `1` | energy per lane jump (#2) |
-| `wormhole_energy_cost` | int | `1` | energy per wormhole jump (#2; may diverge later) |
+| `wormhole_cost_per_dist` | float | `1.0` | wormhole energy per unit crow-flies span — the un-compressed short-jump rate (#2) |
+| `wormhole_cost_cap` | int | `20` | wormhole energy soft cap — the ceiling a long jump asymptotes toward (#2) |
 | `gradient_strength` | float | `0.5` | core↔rim price tilt `k` (#3) |
 | `trade_spread` | float | `0.10` | buy/sell margin (#3) |
 | `default_hold_size` | int | `20` | starting cargo hold size, tons (#3) |
 
-(Future: energy-pacing knobs, per the roadmap's open tuning question.) Edited live from the admin
-**Settings** tab (`ConfigPanel.vue`); the public `/api/universe` only exposes the two movement
-costs the warp UI needs — never the whole knob set.
+A wormhole's cost is `cap · tanh(perDist · d / cap)` over its span `d` — ~linear for a short
+jump (so it isn't unduly discounted), softening to `cap` for a long one (so it never balloons),
+and always ≤ walking the distance. (Future: energy-pacing knobs, per the roadmap's open tuning
+question.) Edited live from the admin **Settings** tab (`ConfigPanel.vue`); the public
+`/api/universe` exposes only the flat lane cost — the per-span wormhole cost rides each exit/edge
+instead, never the whole knob set.
 
 ## Migration
 

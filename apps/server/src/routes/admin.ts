@@ -1,9 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { generateGalaxy, withDefaults, N, DEFAULT_ENERGY } from '@starwonder/game-core';
+import { generateGalaxy, withDefaults, N, DEFAULT_ENERGY, currentEnergy } from '@starwonder/game-core';
 import { bigBangInput, configPutInput } from '@starwonder/shared';
 import { db, schema } from '../db';
 import { getWorld, invalidateWorldCache } from '../galaxy';
-import { getSession, loadUser, defaultShip } from '../session';
+import { getSession, loadUser, defaultShip, shipOf } from '../session';
 import { allConfig, setConfig, isConfigKey } from '../config';
 
 // Resolve the caller's user iff they're an admin, else send 401/403 and return null.
@@ -28,6 +28,57 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     const w = getWorld();
     if (!w) return reply.code(503).send({ error: 'no universe' });
     return { seed: w.seed, settings: w.settings, reachable: w.galaxy.reachable, size: N };
+  });
+
+  // Roster of accounts and the traders they run — admin overview. Each trader's energy is
+  // computed (not persisted) for display, mirroring the lazy regen model. Accounts with no
+  // trader still appear (empty `traders`), so the operator sees the full membership.
+  app.get('/api/admin/users', async (req, reply) => {
+    if ((await requireAdmin(req, reply)) === null) return;
+
+    const users = db.select().from(schema.users).all();
+    const traders = db.select().from(schema.traders).all();
+
+    const byUser = new Map<number, typeof traders>();
+    for (const t of traders) {
+      const list = byUser.get(t.userId);
+      if (list) list.push(t);
+      else byUser.set(t.userId, [t]);
+    }
+
+    return {
+      users: users.map((u) => ({
+        id: u.id,
+        username: u.username,
+        isAdmin: u.isAdmin,
+        createdAt: u.createdAt,
+        traders: (byUser.get(u.id) ?? []).map((t) => {
+          const e = currentEnergy({ value: t.energy, updatedAt: t.energyUpdatedAt });
+          const ship = shipOf(t);
+          const holdUsed = Object.values(ship.cargo).reduce((a, b) => a + b, 0);
+          return {
+            id: t.id,
+            name: t.name,
+            credits: t.credits,
+            energy: e.value,
+            energyCap: DEFAULT_ENERGY.cap,
+            currentSector: t.currentSector,
+            holdUsed,
+            holdSize: ship.holdSize,
+            createdAt: t.createdAt,
+          };
+        }),
+      })),
+    };
+  });
+
+  // Where every trader is right now — sectorId → count, for the Explorer map's presence dots.
+  app.get('/api/admin/presence', async (req, reply) => {
+    if ((await requireAdmin(req, reply)) === null) return;
+    const rows = db.select({ sector: schema.traders.currentSector }).from(schema.traders).all();
+    const presence: Record<number, number> = {};
+    for (const r of rows) presence[r.sector] = (presence[r.sector] ?? 0) + 1;
+    return { presence };
   });
 
   app.get('/api/admin/config', async (req, reply) => {
