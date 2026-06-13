@@ -8,6 +8,19 @@ importers:
 
   .: {}
 
+  apps/bot:
+    dependencies:
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.9.0
+        version: 22.19.19
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
   apps/server:
     dependencies:
       '@fastify/cookie':
@@ -56,6 +69,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@starwonder/game-core':
+        specifier: workspace:*
+        version: link:../../packages/game-core
       '@starwonder/shared':
         specifier: workspace:*
         version: link:../../packages/shared

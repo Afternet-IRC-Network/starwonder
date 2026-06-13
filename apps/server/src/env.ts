@@ -10,6 +10,11 @@ const schema = z.object({
   // Set to "true" only when serving over HTTPS (TLS termination at the reverse proxy).
   // Leaving it false lets the cookie work over plain HTTP on the local network.
   COOKIE_SECURE: z.string().transform((v) => v === 'true').default('false'),
+  // Shared secret for the IRC bot's /api/bot/* endpoints (Authorization: Bearer <token>).
+  BOT_TOKEN: z.string().min(8).default('dev-bot-token-change-me'),
+  // When set, the idle narrator calls the Claude API; absent, it falls back to templated
+  // lines and exposes the would-be prompt for inspection.
+  ANTHROPIC_API_KEY: z.string().optional(),
 });
 
 export const env = schema.parse(process.env);

@@ -68,5 +68,84 @@ export function ensureSchema(sqlite: BetterSqlite3.Database): void {
       b_sector INTEGER NOT NULL,
       PRIMARY KEY (trader_id, a_sector, b_sector)
     );
+
+    CREATE TABLE IF NOT EXISTS dock_sessions (
+      trader_id INTEGER PRIMARY KEY,
+      kind TEXT NOT NULL DEFAULT 'dock',
+      sector_id INTEGER NOT NULL,
+      route TEXT,
+      started_at INTEGER NOT NULL,
+      settled_at INTEGER NOT NULL,
+      beats_resolved INTEGER NOT NULL DEFAULT 0,
+      caps_used TEXT,
+      narrative TEXT,
+      narrated_through INTEGER NOT NULL DEFAULT 0,
+      announced INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      trader_id INTEGER NOT NULL,
+      sector_id INTEGER NOT NULL,
+      beat INTEGER,
+      at INTEGER NOT NULL,
+      plugin TEXT NOT NULL,
+      fact TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_events_trader ON events (trader_id, id);
+    CREATE INDEX IF NOT EXISTS idx_events_id ON events (id);
+
+    CREATE TABLE IF NOT EXISTS trader_station (
+      trader_id INTEGER NOT NULL,
+      sector_id INTEGER NOT NULL,
+      standing REAL NOT NULL DEFAULT 0,
+      flags TEXT,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (trader_id, sector_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS market_nudge (
+      trader_id INTEGER NOT NULL,
+      sector_id INTEGER NOT NULL,
+      commodity TEXT NOT NULL,
+      factor REAL NOT NULL,
+      expires_at INTEGER NOT NULL,
+      PRIMARY KEY (trader_id, sector_id, commodity)
+    );
   `);
+
+  // Guarded ALTERs so pre-existing DBs upgrade in place.
+  const colsOf = (table: string): Set<string> =>
+    new Set(
+      (sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name),
+    );
+
+  // Idle-narrative columns on traders.
+  const traderCols = colsOf('traders');
+  const add = (name: string, ddl: string): void => {
+    if (!traderCols.has(name)) sqlite.exec(`ALTER TABLE traders ADD COLUMN ${ddl}`);
+  };
+  add('heat', 'heat REAL NOT NULL DEFAULT 0');
+  add('heat_updated_at', 'heat_updated_at INTEGER NOT NULL DEFAULT 0');
+  add('conditions', 'conditions TEXT');
+  add('persona', 'persona TEXT');
+  add('trade_order', 'trade_order TEXT');
+
+  // The goal moved from dock_sessions to traders (trader-level: it rides across docks and
+  // courses); sessions grew a kind ('dock' | 'transit') and a route for the transit case.
+  const sessionCols = colsOf('dock_sessions');
+  if (!sessionCols.has('kind')) sqlite.exec(`ALTER TABLE dock_sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'dock'`);
+  if (!sessionCols.has('route')) sqlite.exec(`ALTER TABLE dock_sessions ADD COLUMN route TEXT`);
+  // DEFAULT 1 here (vs 0 in the fresh DDL): pre-existing stays must not retro-announce.
+  if (!sessionCols.has('announced')) sqlite.exec(`ALTER TABLE dock_sessions ADD COLUMN announced INTEGER NOT NULL DEFAULT 1`);
+  if (!traderCols.has('goal')) {
+    sqlite.exec(`ALTER TABLE traders ADD COLUMN goal TEXT`);
+    if (sessionCols.has('goal')) {
+      // One-time carry: lift any live dock-session goal onto its trader.
+      sqlite.exec(
+        `UPDATE traders SET goal = (SELECT goal FROM dock_sessions WHERE dock_sessions.trader_id = traders.id)
+         WHERE goal IS NULL AND id IN (SELECT trader_id FROM dock_sessions WHERE goal IS NOT NULL)`,
+      );
+    }
+  }
 }

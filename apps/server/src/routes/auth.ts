@@ -13,7 +13,9 @@ import {
   signSession,
   clearSession,
   getSession,
+  loadActiveTrader,
 } from '../session';
+import { settleTrader } from '../idle';
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/auth/register', async (req, reply) => {
@@ -72,6 +74,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/auth/me', async (req, reply) => {
     const s = await getSession(req);
     if (!s) return reply.code(401).send({ error: 'not authenticated' });
+    // Settle-first BEFORE buildMe's plain energy settle: a course in flight must spend
+    // its hops at nominal beat times before the regen anchor advances to "now".
+    const w = getWorld();
+    const trader = loadActiveTrader(s);
+    if (w && trader) settleTrader(w, trader);
     const me = buildMe(s.uid, s.activeTraderId);
     if (!me) return reply.code(401).send({ error: 'user not found' });
     return me;
@@ -106,6 +113,9 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
           energyUpdatedAt: now,
           currentSector: 0,
           ship: defaultShip(),
+          heatUpdatedAt: now,
+          // Persona: tags steer the idle-sim dice; blurb is for the AI narrator only.
+          persona: { blurb: body.blurb, tags: body.tags },
           createdAt: now,
         })
         .returning()

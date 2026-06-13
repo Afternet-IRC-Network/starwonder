@@ -139,7 +139,7 @@ export interface SectorView {
   dangerTier: DangerTier;
   /** jumps from Sol over lanes + wormholes; -1 if void */
   jumpsFromSol: number;
-  /** existing neighbours reachable in one jump (lanes + wormholes) */
+  /** existing LANE neighbours only — wormhole links ride `wormholes`/`wormholeExitsAt` */
   neighbors: number[];
   wormholes: number[];
 }
@@ -161,7 +161,10 @@ export function sectorView(g: Galaxy, id: number): SectorView {
     danger: dangerCurve(rimT),
     dangerTier: dangerTier(rimT),
     jumpsFromSol: g.dist[id],
-    neighbors: g.adj[id].filter((n) => g.dist[n] >= 0),
+    // adj includes wormhole endpoints (reachability runs over both), but as a VIEW a
+    // wormhole is never a lane — move/planCourse judge it the same way, so a wormhole
+    // destination must not render as a clickable lane chip.
+    neighbors: g.adj[id].filter((n) => g.dist[n] >= 0 && !wormholes.includes(n)),
     wormholes,
   };
 }

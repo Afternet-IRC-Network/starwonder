@@ -81,7 +81,7 @@ async function select(id: number): Promise<void> {
   const token = ++detailToken;
   loadingDetail.value = true;
   try {
-    const s = await api.sector(id);
+    const s = await api.adminSector(id); // omniscient — even if this admin also plays a trader
     if (token === detailToken) selectedSector.value = s;
   } finally {
     if (token === detailToken) loadingDetail.value = false;

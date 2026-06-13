@@ -1,6 +1,13 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { eq } from 'drizzle-orm';
-import { currentEnergy, DEFAULT_ENERGY } from '@starwonder/game-core';
+import {
+  activeModifiers,
+  applyEnergyMods,
+  conditionInfo,
+  currentEnergy,
+  DEFAULT_ENERGY,
+  type Condition,
+} from '@starwonder/game-core';
 import type { MeResponse, ShipData } from '@starwonder/shared';
 import { db, schema } from './db';
 import { env } from './env';
@@ -94,22 +101,36 @@ export function buildMe(uid: number, activeTraderId: number | null): MeResponse 
   let activeTrader: MeResponse['activeTrader'] = null;
   const active = activeTraderId != null ? rows.find((r) => r.id === activeTraderId) : undefined;
   if (active) {
-    const e = currentEnergy({ value: active.energy, updatedAt: active.energyUpdatedAt });
+    // Conditions warp the energy config (regen factor, cap) — settle at the trader's
+    // effective rate, and tell the client that rate so its local tick matches.
+    const conditions = (active.conditions as Condition[] | null) ?? [];
+    const cfg = applyEnergyMods(DEFAULT_ENERGY, activeModifiers(conditions));
+    const e = currentEnergy({ value: active.energy, updatedAt: active.energyUpdatedAt }, cfg);
     if (e.value !== active.energy || e.updatedAt !== active.energyUpdatedAt) {
       db.update(schema.traders)
         .set({ energy: e.value, energyUpdatedAt: e.updatedAt })
         .where(eq(schema.traders.id, active.id))
         .run();
     }
+    // Lazy heat decay (mirror of energy; written back on the next settle).
+    const hours = Math.max(0, Date.now() - (active.heatUpdatedAt || active.createdAt)) / 3_600_000;
+    const heat = Math.max(0, active.heat - hours * getConfig('heat_decay_per_hour'));
+
     activeTrader = {
       id: active.id,
       name: active.name,
       credits: active.credits,
       energy: e.value,
-      energyCap: DEFAULT_ENERGY.cap,
+      energyCap: cfg.cap,
       energyUpdatedAt: e.updatedAt,
+      energyTickSeconds: cfg.perTickSeconds,
       currentSector: active.currentSector,
       ship: shipOf(active),
+      heat: Math.round(heat * 10) / 10,
+      conditions: conditions
+        .map((c) => ({ c, info: conditionInfo(c.id) }))
+        .filter((x) => x.info !== null)
+        .map((x) => ({ id: x.c.id, since: x.c.since, label: x.info!.label, blurb: x.info!.blurb })),
     };
   }
 

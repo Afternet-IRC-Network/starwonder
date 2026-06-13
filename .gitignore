@@ -10,3 +10,4 @@ apps/server/data/
 .DS_Store
 .pnpm-store/
 apps/web/dist/
+.claude/settings.local.json

@@ -1,15 +1,42 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
-import type { MeResponse, ShipData } from '@starwonder/shared';
+import type { MeResponse } from '@starwonder/shared';
 import { currentEnergy, DEFAULT_ENERGY } from '@starwonder/game-core';
-import { api, type SectorView, type UniverseInfo, type MapView, type PresenceMap } from './api';
+import {
+  api,
+  onVersionChange,
+  type SectorView,
+  type UniverseInfo,
+  type MapView,
+  type PresenceMap,
+  type IdleView,
+  type LogEventView,
+  type OrderResult,
+} from './api';
 import AdminBigBang from './controllers/AdminBigBang.vue';
 import AdminExplorer from './controllers/AdminExplorer.vue';
 import OrbitPanel from './components/game/OrbitPanel.vue';
 import PilotScreen from './components/game/PilotScreen.vue';
 import DockMarket from './components/game/DockMarket.vue';
+import DockActivity from './components/game/DockActivity.vue';
+import DockPanel from './components/game/DockPanel.vue';
 import StarChart from './components/game/StarChart.vue';
 import WarpLane from './components/game/WarpLane.vue';
+import CaptainsLog from './components/game/CaptainsLog.vue';
+import WhileAway from './components/game/WhileAway.vue';
+
+// ── Version freshness ─────────────────────────────────────────────────────────
+// The API layer flags when any response carries a newer server build stamp (a redeploy
+// happened under this tab). Hidden tab → just reload; nobody's watching and they come
+// back to a fresh page. Visible → a banner asks, so we never yank a screen mid-thought.
+const updateReady = ref(false);
+function reloadPage(): void {
+  window.location.reload();
+}
+onVersionChange(() => {
+  if (document.hidden) reloadPage();
+  else updateReady.value = true;
+});
 
 // ── State ───────────────────────────────────────────────────────────────────
 const me = ref<MeResponse | null>(null);
@@ -112,49 +139,8 @@ const route = computed<{ path: number[]; hops: number; energy: number } | null>(
   return planRoute(mapView.value, at.value.currentSector, target, universe.value?.costs.move);
 });
 const routePath = computed<number[]>(() => route.value?.path ?? []);
-const canAffordRoute = computed(
-  () => !!route.value && !!at.value && liveEnergy.value >= route.value.energy,
-);
 
-const traveling = ref(false);
 const travelError = ref('');
-async function travelRoute() {
-  const r = route.value;
-  if (!r || traveling.value || !me.value?.activeTrader) return;
-  traveling.value = true;
-  travelError.value = '';
-  const t = me.value.activeTrader;
-  let ok = true;
-  let arrival: SectorView | null = null;
-  let chartedDest = false;
-  try {
-    // Walk the course hop-by-hop; each move is validated server-side.
-    for (let i = 1; i < r.path.length; i++) {
-      const res = await api.move({ to: r.path[i] });
-      t.currentSector = res.trader.currentSector;
-      t.energy = res.trader.energy;
-      t.energyUpdatedAt = res.trader.energyUpdatedAt;
-      t.credits = res.trader.credits;
-      t.ship = res.trader.ship;
-      sector.value = res.sector;
-      arrival = res.sector;
-      chartedDest = res.discovered; // only the final hop's flag matters for the on-arrival toast
-    }
-  } catch (e) {
-    travelError.value = (e as Error).message;
-    ok = false;
-  }
-  // Fog grew as far as we got — refresh the chart either way.
-  try { const m = await api.map(); mapView.value = m; mapPresence.value = m.presence; } catch { /* keep stale view */ }
-  traveling.value = false;
-  if (ok) {
-    resetMapSelection();
-    navigate('sector'); // arrived → drop back to the sector screen at the destination
-    // Toast fires for the sector you're actually looking at — never an unseen sector mid-route.
-    if (chartedDest && arrival) announceDiscovery(arrival);
-  }
-  // On failure: stay on the map so the route + error stay visible.
-}
 
 // ── Hash router ───────────────────────────────────────────────────────────────
 const GAME_TABS = ['sector', 'map', 'ship', 'log'] as const;
@@ -221,7 +207,148 @@ async function loadGame() {
     api.universe(),
     api.sector(at.value.currentSector),
   ]);
+  // Settle downtime + learn what happened while away (pops the sheet / badges the log).
+  await pollIdle();
 }
+
+// ── Downtime: the poll, the unread badge, and the while-you-were-away sheet ──
+// One mechanism covers every way of coming back: a fresh login, a restored tab, or a
+// browser simply left open. Every ~60s (and immediately when the tab becomes visible)
+// we settle server-side and diff the event feed against the last id this browser has
+// seen (localStorage). Anything new pops the WhileAway sheet over whatever tab is open —
+// unless you're already reading the log, or the dock modal is up. Dismissing marks seen.
+const idleView = ref<IdleView | null>(null);
+const logEvents = ref<LogEventView[] | null>(null);
+const awayOpen = ref(false);
+
+const seenKey = computed(() => (at.value ? `sw-seen-${at.value.id}` : ''));
+const lastSeenId = ref(0);
+watch(seenKey, (k) => { lastSeenId.value = k ? Number(localStorage.getItem(k) ?? 0) : 0; }, { immediate: true });
+
+const unreadEvents = computed<LogEventView[]>(() =>
+  (logEvents.value ?? []).filter((e) => e.id > lastSeenId.value),
+);
+const unreadCount = computed(() => unreadEvents.value.length);
+
+function markSeen() {
+  const maxId = Math.max(0, ...(logEvents.value ?? []).map((e) => e.id), lastSeenId.value);
+  lastSeenId.value = maxId;
+  if (seenKey.value) localStorage.setItem(seenKey.value, String(maxId));
+}
+
+let polling = false;
+async function pollIdle(): Promise<void> {
+  if (polling || view.value !== 'game' || !me.value?.activeTrader) return;
+  polling = true;
+  try {
+    const [iv, lg] = await Promise.all([api.idle(), api.log()]);
+    idleView.value = iv;
+    logEvents.value = lg.events;
+    const t = me.value?.activeTrader;
+    if ((t && iv.currentSector !== t.currentSector) || unreadCount.value > 0) {
+      // The autopilot moved us and/or downtime changed credits/cargo/energy — refresh
+      // `me`; the currentSector watch below re-syncs the sector panel and the chart.
+      const m = await api.me();
+      if (m) me.value = m;
+    }
+    if (unreadCount.value > 0) {
+      if (gameTab.value === 'log') markSeen(); // already reading it
+      else if (!(docked.value && gameTab.value === 'sector')) awayOpen.value = true; // not over the dock screen
+    }
+  } catch { /* offline / no trader — try again next tick */ }
+  polling = false;
+}
+
+let idleTimer: ReturnType<typeof setInterval> | null = null;
+function onVisible(): void {
+  if (!document.hidden) pollIdle(); // restored tab → catch up right away
+}
+onMounted(() => {
+  idleTimer = setInterval(() => { if (!document.hidden) pollIdle(); }, 60_000);
+  document.addEventListener('visibilitychange', onVisible);
+});
+onUnmounted(() => {
+  if (idleTimer) clearInterval(idleTimer);
+  document.removeEventListener('visibilitychange', onVisible);
+});
+
+function dismissAway(): void {
+  awayOpen.value = false;
+  markSeen();
+}
+function awayToLog(): void {
+  awayOpen.value = false;
+  markSeen();
+  navigate('log');
+}
+
+// Opening the log refreshes + marks everything seen.
+watch([gameTab, view], async ([tab, v]) => {
+  if (v === 'game' && tab === 'log') {
+    await pollIdle();
+    markSeen();
+  }
+});
+
+// A settle (goal change, course cancel) can hand back a fresh view and change credits.
+async function onIdleSettled(fresh?: IdleView) {
+  if (fresh) idleView.value = fresh;
+  const m = await api.me();
+  if (m) me.value = m;
+  try { logEvents.value = (await api.log()).events; } catch { /* keep stale */ }
+  markSeen();
+}
+
+// ── Plotted course (transit) ──────────────────────────────────────────────────
+const inTransit = computed(() => idleView.value?.mode === 'transit');
+// The remaining course, drawn on the chart whenever nothing else is selected.
+const courseRemaining = computed<number[]>(() => {
+  const c = idleView.value?.course;
+  return c ? c.path.slice(c.leg) : [];
+});
+const chartRoute = computed<number[]>(() =>
+  mapSelected.value != null ? routePath.value : courseRemaining.value,
+);
+
+const plottingCourse = ref(false);
+// Discovery toast for course-flown arrivals: remembered here, fired by the position
+// watch once the newly-charted sector's detail is actually on screen.
+const pendingDiscovery = ref<number | null>(null);
+
+// ONE travel mechanic: every journey is a course. The settle flies it greedily — as far
+// as the banked energy pool allows *immediately*, then regen paces the rest — so a tap
+// with a charged tank feels like an instant jump, and a broke tap just waits to depart.
+async function setCourse(path: number[], discoverTarget: number | null = null) {
+  if (plottingCourse.value) return;
+  plottingCourse.value = true;
+  travelError.value = '';
+  moveError.value = '';
+  try {
+    const view = await api.setCourse(path);
+    pendingDiscovery.value = discoverTarget;
+    resetMapSelection(); // the course line takes over from the plotted-route line
+    await onIdleSettled(view); // the burst may have moved us / robbed us — sync everything
+  } catch (e) {
+    travelError.value = (e as Error).message;
+    moveError.value = (e as Error).message;
+  }
+  plottingCourse.value = false;
+}
+
+// A lane / known-wormhole tap on the sector screen = a 1-hop course. Instant when the
+// drive can pay, "charging to jump" when it can't — never an error.
+function jumpTo(dest: number, visited: boolean) {
+  if (!at.value) return;
+  setCourse([at.value.currentSector, dest], visited ? null : dest);
+}
+
+// How long a quoted route would spend charging en route, given the live pool.
+const routeWaitMin = computed(() => {
+  const r = route.value;
+  if (!r || !at.value) return 0;
+  const deficit = Math.max(0, r.energy - liveEnergy.value);
+  return Math.ceil((deficit * (at.value.energyTickSeconds ?? 360)) / 60);
+});
 
 const moveError = ref('');
 const moving = ref(false);
@@ -260,28 +387,83 @@ async function move(body: { to: number } | { wormhole: number }) {
   } finally {
     moving.value = false;
   }
+  pollIdle(); // the move re-anchored the downtime session — refresh the story state
 }
 
-function onTraded(trader: { credits: number; ship: ShipData }) {
-  if (!me.value?.activeTrader) return;
-  me.value.activeTrader.credits = trader.credits;
-  me.value.activeTrader.ship = trader.ship;
+// An order intent settled (place / scrub) — the burst may have moved credits, cargo AND
+// energy. Patch the HUD, sync the personal prices, refresh the story, and mark our own
+// fills seen (they shouldn't pop the while-away sheet later).
+async function onOrder(res: OrderResult) {
+  marketOpen.value = false; // errand sent (or called off) — back to the activity card
+  const t = me.value?.activeTrader;
+  if (t) {
+    t.credits = res.trader.credits;
+    t.ship = res.trader.ship;
+    t.energy = res.trader.energy;
+    t.energyCap = res.trader.energyCap;
+    t.energyUpdatedAt = res.trader.energyUpdatedAt;
+  }
+  if (sector.value) sector.value.market = res.market;
+  await pollIdle();
+  markSeen();
 }
 
-// ── Dock modal ──────────────────────────────────────────────────────────────────
-// Reached by tapping a station's "In orbit" card (no more bottom-nav "dock" tab, since a
-// sector could host more than one station later). Always docks the trader's *current*
-// sector; leaving the sector closes it.
-const STATION_DESC: Record<string, string> = {
-  trade: 'Trade hub',
-  haven: 'Safe haven',
-  outpost: 'Frontier outpost',
-};
-const dockOpen = ref(false);
-function openDock() {
-  if (sector.value?.station) dockOpen.value = true;
+// ── Docked state ─────────────────────────────────────────────────────────────────
+// Docking is formal in the UI: while docked, the "sector" tab IS the dock tab — the
+// dock-bay screen replaces the orbit view until you undock or set out.
+const docking = ref(false);
+const docked = computed(() => idleView.value?.mode === 'dock');
+
+// Tapping the station card DOCKS you (an intent — you stay docked until you undock or
+// set out); the sector tab flips to the dock screen either way.
+async function openDock() {
+  if (!sector.value?.station || docking.value) return;
+  navigate('sector');
+  if (docked.value) {
+    pollIdle(); // settle the stay so standing/heat are current
+    return;
+  }
+  docking.value = true;
+  try {
+    const view = await api.dock();
+    await onIdleSettled(view);
+  } catch { /* in transit / no station — the next poll sorts the UI out */ }
+  docking.value = false;
 }
-watch(() => at.value?.currentSector, () => { dockOpen.value = false; });
+
+// The market sheet — Buy & Sell is one activity among several, so the listings live
+// behind a chip rather than on the tab itself. Closes itself when the dock ends.
+const marketOpen = ref(false);
+watch(docked, (d) => { if (!d) marketOpen.value = false; });
+
+// Cast off: back to anchor in orbit. Scrubs any working order (leaving is leaving).
+async function undock() {
+  if (docking.value) return;
+  docking.value = true;
+  try {
+    const view = await api.undock();
+    await onIdleSettled(view);
+  } catch { /* already at anchor */ }
+  docking.value = false;
+}
+
+// Position is SERVER-authoritative — the autopilot can move the ship while any tab (or
+// none) is open. Whatever updated `me` (a move, a poll, a goal save), this watch is the
+// one place that re-syncs the sector panel and the chart to where the trader actually is.
+watch(() => at.value?.currentSector, async (cur) => {
+  if (cur == null || sector.value?.id === cur) return;
+  try { sector.value = await api.sector(cur); } catch { /* keep stale — retried next poll */ }
+  mapView.value = null; // fog may have grown — refetch lazily (or now, if we're looking at it)
+  resetMapSelection();
+  if (gameTab.value === 'map') {
+    try { const m = await api.map(); mapView.value = m; mapPresence.value = m.presence; } catch { /* next open */ }
+  }
+  // A jump into the unknown landed and its detail is on screen — fire the charted toast.
+  if (pendingDiscovery.value != null && sector.value?.id === pendingDiscovery.value) {
+    announceDiscovery(sector.value);
+    pendingDiscovery.value = null;
+  }
+});
 
 // ── Auth ────────────────────────────────────────────────────────────────────
 const username = ref('');
@@ -311,7 +493,6 @@ async function logout() {
   me.value = null;
   sector.value = null;
   mapView.value = null;
-  dockOpen.value = false;
 }
 
 async function onPilotReady(m: MeResponse) {
@@ -366,9 +547,18 @@ let energyTimer: ReturnType<typeof setInterval> | null = null;
 onMounted(() => { energyTimer = setInterval(() => { now.value = Date.now(); }, 5000); });
 onUnmounted(() => { if (energyTimer) clearInterval(energyTimer); });
 
+// Conditions (measles!) stretch the regen clock — tick at the trader's effective rate.
+const energyCfg = computed(() => ({
+  cap: at.value?.energyCap ?? DEFAULT_ENERGY.cap,
+  perTickSeconds: at.value?.energyTickSeconds ?? DEFAULT_ENERGY.perTickSeconds,
+  amountPerTick: DEFAULT_ENERGY.amountPerTick,
+}));
+const regenSlowed = computed(
+  () => (at.value?.energyTickSeconds ?? DEFAULT_ENERGY.perTickSeconds) > DEFAULT_ENERGY.perTickSeconds,
+);
 const liveEnergy = computed(() =>
   at.value
-    ? currentEnergy({ value: at.value.energy, updatedAt: at.value.energyUpdatedAt }, DEFAULT_ENERGY, now.value).value
+    ? currentEnergy({ value: at.value.energy, updatedAt: at.value.energyUpdatedAt }, energyCfg.value, now.value).value
     : 0,
 );
 
@@ -382,6 +572,15 @@ const holdUsed = computed(() =>
 </script>
 
 <template>
+  <!-- New build live — one tap to get off the stale bundle (hidden tabs reload themselves) -->
+  <button
+    v-if="updateReady"
+    class="fixed top-0 inset-x-0 z-50 px-4 py-2 bg-accent text-bg text-xs font-bold text-center shadow-lg"
+    @click="reloadPage"
+  >
+    ✦ StarWonder updated — tap to reload
+  </button>
+
   <!-- Boot splash -->
   <div v-if="booting" class="min-h-screen grid place-items-center text-muted text-sm">
     loading…
@@ -463,8 +662,8 @@ const holdUsed = computed(() =>
     @logout="logout"
   />
 
-  <!-- ── Game ── -->
-  <div v-else-if="view === 'game' && at" class="min-h-screen mx-auto max-w-md flex flex-col">
+  <!-- ── Game ── fixed-height shell: main scrolls, the tab bar stays pinned -->
+  <div v-else-if="view === 'game' && at" class="h-[100dvh] mx-auto max-w-md flex flex-col">
 
     <header class="px-4 pt-4 pb-3 border-b border-line flex-shrink-0">
       <div class="flex items-center justify-between">
@@ -484,10 +683,15 @@ const holdUsed = computed(() =>
       <div class="mt-3 flex items-center gap-3">
         <div class="flex-1">
           <div class="flex justify-between text-[11px] text-muted mb-1">
-            <span>Energy</span><span>{{ liveEnergy }} / {{ at.energyCap }}</span>
+            <span>Energy<span v-if="regenSlowed" class="text-gold" title="A condition is slowing your recovery"> · slowed</span></span>
+            <span>{{ liveEnergy }} / {{ at.energyCap }}</span>
           </div>
           <div class="h-1.5 rounded-full bg-panel2 overflow-hidden">
-            <div class="h-full bg-accent transition-all duration-300" :style="{ width: energyPct + '%' }" />
+            <div
+              class="h-full transition-all duration-300"
+              :class="regenSlowed ? 'bg-gold/70' : 'bg-accent'"
+              :style="{ width: energyPct + '%' }"
+            />
           </div>
         </div>
         <div class="text-right">
@@ -495,14 +699,66 @@ const holdUsed = computed(() =>
           <div class="text-sm text-gold font-mono">{{ at.credits }}</div>
         </div>
       </div>
+      <!-- Active conditions — hover for what they do and how they end -->
+      <div v-if="at.conditions?.length" class="mt-2 flex flex-wrap gap-1.5">
+        <span
+          v-for="c in at.conditions"
+          :key="c.id"
+          :title="c.blurb"
+          class="px-2 py-0.5 rounded-full border border-gold/50 bg-gold/10 text-gold text-[10px] font-semibold cursor-help"
+        >{{ c.label }}</span>
+      </div>
+      <!-- Course banner — the autopilot is flying; tap for the story (cancel lives there) -->
+      <button
+        v-if="inTransit && idleView?.course"
+        class="mt-2 w-full flex items-center gap-2 px-3 py-1.5 rounded-lg border border-accent/50 bg-accent/10 text-left hover:bg-accent/20 transition-colors"
+        @click="navigate('log')"
+      >
+        <span class="text-accent text-[11px] font-semibold truncate">
+          ⟶ Under way to {{ idleView.course.destination.name }}
+        </span>
+        <span class="ml-auto text-[10px] text-muted flex-shrink-0">
+          {{ idleView.course.hopsRemaining }} jump{{ idleView.course.hopsRemaining === 1 ? '' : 's' }} left
+        </span>
+      </button>
     </header>
 
     <main class="flex-1 p-4 flex flex-col gap-4 overflow-y-auto">
 
+      <!-- Sector tab — becomes the DOCK tab while berthed: the bay scene + marketplace
+           replace the orbit view until you undock or set out -->
+      <template v-if="gameTab === 'sector' && docked && sector?.station">
+        <DockPanel
+          :sector="sector"
+          :vibe="idleView?.vibe"
+          :standing="idleView?.standing"
+          :heat="idleView?.heat"
+          :ship-seed="at.name"
+          :busy="docking"
+          @undock="undock"
+        />
+        <!-- What you're up to on the docks — the working errand (or your goal), plus the
+             things-to-do chips: Buy & Sell opens the market sheet, the rest set the goal -->
+        <div>
+          <div class="text-[10px] uppercase tracking-[2.5px] text-muted mb-1.5">Activity</div>
+          <DockActivity
+            :order="idleView?.order ?? null"
+            :market="sector.market"
+            :goal="idleView?.goal ?? null"
+            :goal-kinds="idleView?.goalKinds ?? []"
+            :events="logEvents"
+            @order="onOrder"
+            @settled="onIdleSettled"
+            @market="marketOpen = true"
+            @log="navigate('log')"
+          />
+        </div>
+      </template>
+
       <!-- Sector tab -->
-      <template v-if="gameTab === 'sector'">
+      <template v-else-if="gameTab === 'sector'">
         <div class="relative">
-          <OrbitPanel v-if="sector" :sector="sector" dockable @dock="openDock" />
+          <OrbitPanel v-if="sector" :sector="sector" dockable :docked="docked" @dock="openDock" />
           <div v-else class="h-[230px] rounded-2xl border border-line bg-[#080c16] grid place-items-center text-muted text-xs">
             loading…
           </div>
@@ -528,28 +784,33 @@ const holdUsed = computed(() =>
         <div v-if="sector">
           <div class="text-[10px] uppercase tracking-[2px] text-muted mb-2 px-1">Warp lanes</div>
           <div class="flex gap-2 overflow-x-auto pb-1 -mx-4 px-4">
-            <!-- Lanes -->
+            <!-- Lanes — a tap is a 1-hop course: instant when charged, queued when not -->
             <WarpLane
               v-for="lane in (sector.lanes ?? [])"
               :key="'l' + lane.id"
               :lane="lane"
-              :disabled="moving || liveEnergy < (universe?.costs.move ?? 1)"
-              @go="move({ to: lane.id })"
+              :disabled="moving || plottingCourse"
+              @go="jumpTo(lane.id, lane.visited)"
             />
-            <!-- Wormholes -->
+            <!-- Wormholes — known ones course through; blind jumps need energy NOW
+                 (the autopilot won't fly into the unknown) -->
             <button
               v-for="(w, i) in sector.wormholeExits"
               :key="'w' + i"
-              :disabled="moving || liveEnergy < w.cost"
+              :disabled="moving || plottingCourse || (w.to == null && liveEnergy < w.cost)"
               class="flex-shrink-0 min-w-[108px] border rounded-xl p-3 text-left transition-colors disabled:opacity-40"
               style="background:#161226;border-color:#5a4a1e"
-              @click="w.to != null ? move({ to: w.to }) : move({ wormhole: w.ref })"
+              @click="w.to != null ? jumpTo(w.to, true) : move({ wormhole: w.ref })"
             >
-              <div class="font-bold text-sm font-mono text-gold">
-                <template v-if="w.to != null">◌ #{{ w.to }}</template>
-                <template v-else>◌ unknown</template>
+              <div class="font-bold text-sm text-gold truncate">
+                <template v-if="w.planet">◌ {{ w.planet.name }}</template>
+                <template v-else-if="w.to != null">◌ Deep space</template>
+                <template v-else>◌ Uncharted</template>
               </div>
-              <div class="text-[10px] text-muted mt-1">{{ w.cost }} ⚡ · wormhole</div>
+              <div class="text-[10px] text-muted mt-1 font-mono">
+                <template v-if="w.to != null">#{{ w.to }} · {{ w.cost }} ⚡ wormhole</template>
+                <template v-else>blind jump · {{ w.cost }} ⚡</template>
+              </div>
             </button>
             <div v-if="!sector.neighbors.length && !sector.wormholeExits.length"
               class="flex-shrink-0 min-w-[108px] bg-panel2 border border-dashed border-line rounded-xl p-3">
@@ -568,7 +829,7 @@ const holdUsed = computed(() =>
           :view="mapView"
           :current="at.currentSector"
           :selected="mapSelected"
-          :route="routePath"
+          :route="chartRoute"
           :presence="mapPresence"
           @select="onMapSelect"
         />
@@ -588,14 +849,14 @@ const holdUsed = computed(() =>
             <div class="text-[10px] uppercase tracking-[2px] text-muted mb-2 px-1">
               {{ panelSector.id === at.currentSector ? 'You are here' : 'Inspecting' }}
             </div>
-            <OrbitPanel :sector="panelSector" :dockable="panelSector.id === at.currentSector" @dock="openDock" />
+            <OrbitPanel :sector="panelSector" :dockable="panelSector.id === at.currentSector" :docked="docked" @dock="openDock" />
           </div>
           <div v-else-if="mapSelected != null && isFrontier(mapSelected)">
             <div class="text-[10px] uppercase tracking-[2px] text-muted mb-2 px-1">Unexplored</div>
             <div class="bg-panel border border-dashed border-line rounded-2xl p-5 text-center">
               <div class="text-2xl text-muted font-bold leading-none mb-2">?</div>
-              <div class="text-sm font-semibold">Uncharted sector</div>
-              <p class="text-[11px] text-muted mt-1">Plot a course and fly there to discover what's waiting.</p>
+              <div class="text-sm font-semibold font-mono">Sector #{{ mapSelected }}</div>
+              <p class="text-[11px] text-muted mt-1">Uncharted — plot a course and fly there to discover what's waiting.</p>
             </div>
           </div>
 
@@ -606,18 +867,19 @@ const holdUsed = computed(() =>
               <div class="flex items-center gap-3 bg-panel border border-line rounded-xl px-3 py-2.5">
                 <div class="flex-1 min-w-0">
                   <div class="text-sm font-semibold">
-                    {{ route.hops }} hop{{ route.hops === 1 ? '' : 's' }} · {{ route.energy }} ⚡
+                    {{ route.hops }} hop{{ route.hops === 1 ? '' : 's' }} · {{ route.energy }} ⚡ ·
+                    <template v-if="routeWaitMin === 0">flies now</template>
+                    <template v-else>~{{ routeWaitMin }} min charging en route</template>
                   </div>
-                  <div class="text-[11px]" :class="canAffordRoute ? 'text-muted' : 'text-bad'">
-                    <template v-if="canAffordRoute">{{ liveEnergy }} ⚡ available</template>
-                    <template v-else>need {{ route.energy }} ⚡ · only {{ liveEnergy }} available</template>
+                  <div class="text-[11px] text-muted">
+                    sprints as far as the tank allows, then regen paces the rest — things happen en route
                   </div>
                 </div>
                 <button
-                  :disabled="!canAffordRoute || traveling"
+                  :disabled="plottingCourse"
                   class="flex-shrink-0 rounded-lg px-4 py-2 text-sm font-semibold bg-accent/15 border border-accent text-accent disabled:opacity-40 hover:bg-accent/25 transition-colors"
-                  @click="travelRoute"
-                >{{ traveling ? 'travelling…' : 'Travel here' }}</button>
+                  @click="route && setCourse(route.path)"
+                >{{ plottingCourse ? 'plotting…' : 'Set course' }}</button>
               </div>
               <p v-if="travelError" class="text-bad text-xs mt-1 px-1">{{ travelError }}</p>
             </template>
@@ -644,10 +906,10 @@ const holdUsed = computed(() =>
         </div>
       </template>
 
-      <!-- Log tab -->
-      <div v-else class="flex-1 grid place-items-center text-muted text-sm py-16">
-        {{ gameTab }} · coming soon
-      </div>
+      <!-- Log tab — the Captain's Log: current session, story, goal, and full history -->
+      <template v-else-if="gameTab === 'log'">
+        <CaptainsLog :view="idleView" :events="logEvents" @settled="onIdleSettled" />
+      </template>
 
     </main>
 
@@ -655,12 +917,19 @@ const holdUsed = computed(() =>
       <button
         v-for="tab in GAME_TABS"
         :key="tab"
-        :class="['py-3 text-[11px] capitalize transition-colors', gameTab === tab ? 'text-accent' : 'text-muted hover:text-fg']"
+        :class="['relative py-3 text-[11px] capitalize transition-colors', gameTab === tab ? 'text-accent' : 'text-muted hover:text-fg']"
         @click="navigate(tab)"
-      >{{ tab }}</button>
+      >
+        {{ tab === 'sector' && docked ? 'dock' : tab }}
+        <!-- "while you were away" badge -->
+        <span
+          v-if="tab === 'log' && unreadCount > 0"
+          class="absolute top-1.5 ml-1 min-w-[16px] h-4 px-1 rounded-full bg-gold text-bg text-[9px] font-bold grid place-items-center leading-none"
+        >{{ unreadCount }}</span>
+      </button>
     </nav>
 
-    <!-- ── Dock modal ── opened by tapping a station; trades the current sector -->
+    <!-- ── Market sheet ── Buy & Sell, opened from the ACTIVITY chips while docked -->
     <Transition
       enter-active-class="transition duration-200 ease-out"
       enter-from-class="opacity-0"
@@ -669,30 +938,46 @@ const holdUsed = computed(() =>
       leave-to-class="opacity-0"
     >
       <div
-        v-if="dockOpen && sector?.station"
+        v-if="marketOpen && docked && sector?.station"
         class="fixed inset-0 z-30 flex flex-col justify-end sm:justify-center bg-black/60 backdrop-blur-sm"
-        @click.self="dockOpen = false"
+        @click.self="marketOpen = false"
       >
         <div class="mx-auto w-full max-w-md bg-bg border-t sm:border border-line rounded-t-2xl sm:rounded-2xl flex flex-col max-h-[88vh] overflow-hidden shadow-2xl shadow-black/50">
-          <!-- Title bar -->
           <header class="flex items-center gap-2.5 px-4 py-3 border-b border-line flex-shrink-0">
             <div class="flex-1 min-w-0">
-              <div class="text-sm font-semibold truncate">{{ sector.station.name }}</div>
-              <div class="text-[11px] text-muted">
-                {{ STATION_DESC[sector.station.stationType] ?? 'Station' }} · marketplace
-              </div>
+              <div class="text-sm font-semibold truncate">Buy &amp; Sell</div>
+              <div class="text-[11px] text-muted truncate">{{ sector.station.name }} marketplace</div>
             </div>
             <button
               class="w-8 h-8 -mr-1 grid place-items-center rounded-lg text-muted hover:text-fg hover:bg-panel2 transition-colors"
-              aria-label="Close dock"
-              @click="dockOpen = false"
+              aria-label="Close market"
+              @click="marketOpen = false"
             >✕</button>
           </header>
           <div class="p-4 overflow-y-auto">
-            <DockMarket :sector="sector" :trader="at" @traded="onTraded" />
+            <DockMarket :sector="sector" :trader="at" :order="idleView?.order ?? null" @order="onOrder" />
           </div>
         </div>
       </div>
+    </Transition>
+
+    <!-- ── "While you were away" ── pops over any tab when the poll / a fresh login finds
+         events newer than the last ones this browser saw; dismissing marks them seen -->
+    <Transition
+      enter-active-class="transition duration-200 ease-out"
+      enter-from-class="opacity-0"
+      enter-to-class="opacity-100"
+      leave-active-class="transition duration-150 ease-in"
+      leave-to-class="opacity-0"
+    >
+      <WhileAway
+        v-if="awayOpen && idleView"
+        :view="idleView"
+        :events="unreadEvents"
+        @close="dismissAway"
+        @open-log="awayToLog"
+        @settled="onIdleSettled"
+      />
     </Transition>
 
   </div>

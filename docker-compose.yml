@@ -11,9 +11,34 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:-please-change-me}
       DEFAULT_SEED: ${DEFAULT_SEED:-aurora}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      BOT_TOKEN: ${BOT_TOKEN:-dev-bot-token-change-me}
     volumes:
       - starwonder-data:/app/data
     restart: unless-stopped
 
+  # The IRC town crier — a thin HTTP client of the API server (no DB access). Polls
+  # /api/bot/tick (which settles all dock sessions: the bot doubles as the world's
+  # heartbeat) and announces new events in the channel. Optional: stop it and the game
+  # falls back to pure lazy settle-on-check-in.
+  starwonder-bot:
+    build: .
+    command: ["pnpm", "--filter", "@starwonder/bot", "run", "start"]
+    environment:
+      API_URL: http://starwonder:8080
+      BOT_TOKEN: ${BOT_TOKEN:-dev-bot-token-change-me}
+      IRC_SERVER: ${IRC_SERVER:-irc.afternet.org}
+      IRC_PORT: ${IRC_PORT:-6667}
+      IRC_TLS: ${IRC_TLS:-false}
+      IRC_NICK: ${IRC_NICK:-StarWonder}
+      IRC_CHANNEL: "${IRC_CHANNEL:-#starwonder}"
+      POLL_SECONDS: ${POLL_SECONDS:-90}
+      CURSOR_FILE: /app/botdata/bot-cursor.json
+    volumes:
+      - starwonder-bot-data:/app/botdata
+    depends_on:
+      - starwonder
+    restart: unless-stopped
+
 volumes:
   starwonder-data:
+  starwonder-bot-data:

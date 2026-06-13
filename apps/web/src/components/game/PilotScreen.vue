@@ -10,6 +10,16 @@ const name = ref('');
 const busy = ref(false);
 const error = ref('');
 
+// Persona — tags steer the downtime dice (mechanics); the blurb feeds the AI narrator only.
+const TRAIT_TAGS = ['lawful', 'shady', 'charming', 'gruff', 'cautious', 'reckless', 'lucky'] as const;
+const tags = ref<string[]>([]);
+const blurb = ref('');
+function toggleTag(t: string): void {
+  const i = tags.value.indexOf(t);
+  if (i >= 0) tags.value.splice(i, 1);
+  else if (tags.value.length < 3) tags.value.push(t);
+}
+
 async function select(id: number): Promise<void> {
   if (busy.value) return;
   busy.value = true;
@@ -28,7 +38,7 @@ async function create(): Promise<void> {
   busy.value = true;
   error.value = '';
   try {
-    emit('ready', await api.createTrader(name.value));
+    emit('ready', await api.createTrader(name.value, tags.value, blurb.value.trim()));
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -74,6 +84,31 @@ async function create(): Promise<void> {
           placeholder="pilot name"
           class="bg-panel2 border border-line rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent transition-colors"
         />
+
+        <!-- Persona traits (up to 3) — these shape what happens to you at the docks -->
+        <div>
+          <div class="text-[10px] text-muted mb-1.5">Traits (pick up to 3 — they shape your dockside luck)</div>
+          <div class="flex flex-wrap gap-1.5">
+            <button
+              v-for="t in TRAIT_TAGS"
+              :key="t"
+              type="button"
+              :disabled="!tags.includes(t) && tags.length >= 3"
+              class="px-2.5 py-1 rounded-full border text-[11px] transition-colors disabled:opacity-30"
+              :class="tags.includes(t)
+                ? 'border-accent bg-accent/15 text-accent font-semibold'
+                : 'border-line bg-panel2 text-muted hover:text-fg'"
+              @click="toggleTag(t)"
+            >{{ t }}</button>
+          </div>
+        </div>
+        <input
+          v-model="blurb"
+          maxlength="200"
+          placeholder="who are they? (one line, for the story)"
+          class="bg-panel2 border border-line rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent transition-colors"
+        />
+
         <button
           :disabled="busy || name.trim().length < 2"
           class="bg-accent/15 border border-accent text-accent rounded-lg px-3 py-2 font-semibold text-sm disabled:opacity-50 hover:bg-accent/25 transition-colors"
