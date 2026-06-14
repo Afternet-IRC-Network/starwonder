@@ -67,6 +67,22 @@ const stars: [number, number, number][] = [];
 let nodeScreen: { id: number; sx: number; sy: number; fog: string }[] = [];
 let pulse = 0;
 let raf: number | null = null;
+// CSS-pixel size of the canvas, kept current by a ResizeObserver rather than read inside
+// the draw loop — Firefox Android can report clientWidth 0 mid-frame, which left the chart
+// permanently blank. The backing store is sized here (dpr capped at 2 to avoid oversized
+// buffers on high-density phones); draw() just paints into the stored size.
+const size = { w: 0, h: 0 };
+let ro: ResizeObserver | null = null;
+function resize(): void {
+  const canvas = canvasRef.value, wrap = wrapRef.value;
+  if (!canvas || !wrap) return;
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  if (!w || !h) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  size.w = w; size.h = h;
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
+}
 
 function ring(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, stroke: string, lw: number): void {
   ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.stroke();
@@ -85,11 +101,12 @@ function label(ctx: CanvasRenderingContext2D, x: number, y: number, txt: string,
 function draw(): void {
   const canvas = canvasRef.value;
   if (!canvas) { raf = requestAnimationFrame(draw); return; }
+  if (!size.w) resize(); // first frames before the observer has fired
   const ctx = canvas.getContext('2d');
-  const w = canvas.clientWidth, h = canvas.clientHeight;
+  const w = size.w, h = size.h;
   if (!ctx || !w) { raf = requestAnimationFrame(draw); return; }
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = w * dpr; canvas.height = h * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const dpr = canvas.width / w;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
 
   const P = (x: number, y: number) => ({ x: (x - cam.cx) * cam.zoom + w / 2, y: (y - cam.cy) * cam.zoom + h / 2 });
@@ -219,9 +236,17 @@ watch(() => props.current, centerOnCurrent);
 onMounted(() => {
   indexNodes();
   centerOnCurrent();
+  resize();
+  if (wrapRef.value && typeof ResizeObserver !== 'undefined') {
+    ro = new ResizeObserver(resize);
+    ro.observe(wrapRef.value);
+  }
   raf = requestAnimationFrame(draw);
 });
-onUnmounted(() => { if (raf !== null) cancelAnimationFrame(raf); });
+onUnmounted(() => {
+  if (raf !== null) cancelAnimationFrame(raf);
+  ro?.disconnect();
+});
 </script>
 
 <template>
@@ -243,6 +268,10 @@ onUnmounted(() => { if (raf !== null) cancelAnimationFrame(raf); });
 .chart {
   position: relative;
   height: 268px;
+  /* All children are position:absolute, so this box has zero in-flow content and would
+     otherwise be crushed to ~0 height as a flex child of the scrolling <main> (the map
+     went blank on mobile). Pin the height; let <main> scroll instead. */
+  flex-shrink: 0;
   border: 1px solid #1f2a3d;
   border-radius: 14px;
   background: radial-gradient(70% 70% at 50% 45%, #0e1730, #070b14);
