@@ -72,12 +72,19 @@ function isFrontier(id: number): boolean {
 }
 
 function onMapSelect(id: number) {
-  if (id === at.value?.currentSector) { resetMapSelection(); return; }
   mapSelected.value = id;
   mapDetail.value = null;
   travelError.value = '';
   // A frontier "?" has no charted detail to fetch — just select it so a course can be plotted.
   if (isFrontier(id)) { mapDetailLoading.value = false; return; }
+  // Tapping your own sector shows its world/station too — its detail is already loaded for
+  // the Sector tab, so reuse it (no refetch, no "scanning" flash); the route block stays
+  // hidden for the current sector, and the "Also here" roster is off on the map.
+  if (id === at.value?.currentSector && sector.value) {
+    mapDetail.value = sector.value;
+    mapDetailLoading.value = false;
+    return;
+  }
   mapDetailLoading.value = true;
   api
     .sector(id)
@@ -837,8 +844,10 @@ const holdUsed = computed(() =>
           loading map…
         </div>
 
-        <!-- Selected sector — the shared sector view (incl. the "also here" roster) -->
-        <template v-if="mapView">
+        <!-- Selected sector — the shared sector view, shown only once you tap a world on the
+             chart (the Map tab stays a map otherwise). The "Also here" roster is suppressed
+             here; it lives on the Sector tab. -->
+        <template v-if="mapView && mapSelected != null">
           <div
             v-if="mapDetailLoading && !panelSector"
             class="h-[230px] rounded-2xl border border-line bg-[#080c16] grid place-items-center text-muted text-xs"
@@ -849,7 +858,7 @@ const holdUsed = computed(() =>
             <div class="text-[10px] uppercase tracking-[2px] text-muted mb-2 px-1">
               {{ panelSector.id === at.currentSector ? 'You are here' : 'Inspecting' }}
             </div>
-            <OrbitPanel :sector="panelSector" :dockable="panelSector.id === at.currentSector" :docked="docked" @dock="openDock" />
+            <OrbitPanel :sector="panelSector" :dockable="panelSector.id === at.currentSector" :docked="docked" :show-roster="false" @dock="openDock" />
           </div>
           <div v-else-if="mapSelected != null && isFrontier(mapSelected)">
             <div class="text-[10px] uppercase tracking-[2px] text-muted mb-2 px-1">Unexplored</div>

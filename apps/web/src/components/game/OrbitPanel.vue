@@ -13,7 +13,9 @@ import OrbitViewport from './OrbitViewport.vue';
 import ShipIcon from './ShipIcon.vue';
 import StationIcon from './StationIcon.vue';
 
-const props = defineProps<{ sector: SectorView; dockable?: boolean; docked?: boolean }>();
+// `showRoster` defaults on; the Map tab passes false so the "Also here" roster stays a
+// Sector-tab thing (the map only shows the world/station when you tap a sector).
+const props = defineProps<{ sector: SectorView; dockable?: boolean; docked?: boolean; showRoster?: boolean }>();
 const emit = defineEmits<{ dock: [] }>();
 
 // Tapping the station card opens the dock — but only where that makes sense (the player's
@@ -73,7 +75,7 @@ const STATION_DESC: Record<string, string> = {
     </template>
 
     <!-- Other traders parked in this sector — independent of whether it's inhabited -->
-    <template v-if="sector.traders && sector.traders.length">
+    <template v-if="showRoster !== false && sector.traders && sector.traders.length">
       <div class="text-[10px] uppercase tracking-[2.5px] text-muted mt-3 mb-1.5">Also here</div>
       <div class="flex flex-wrap gap-2">
         <div
