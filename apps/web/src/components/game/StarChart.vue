@@ -201,33 +201,86 @@ function draw(): void {
   raf = requestAnimationFrame(draw);
 }
 
-// ── interaction: drag to pan, scroll to zoom, tap to select ────────────────────
+// ── interaction: drag to pan, scroll OR pinch to zoom, tap to select ───────────
+// Pointer-based so one path serves mouse and touch: one active pointer pans, two pinch.
+// `touch-action: none` (CSS) hands us raw multi-touch instead of the browser's gestures.
+const clampZoom = (z: number): number => Math.max(MIN_Z, Math.min(MAX_Z, z));
+const pointers = new Map<number, { x: number; y: number }>(); // canvas-relative, by pointerId
 let drag: { x: number; y: number; cx: number; cy: number; moved: boolean } | null = null;
+let pinch: { dist: number; zoom: number } | null = null;
+
+function canvasXY(e: PointerEvent): { x: number; y: number } {
+  const r = canvasRef.value!.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+function twoFingers(): { mx: number; my: number; dist: number } {
+  const [a, b] = [...pointers.values()];
+  return { mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)) };
+}
+// Zoom toward a screen point, keeping the world coord under it fixed.
+function zoomAt(z: number, sx: number, sy: number): void {
+  const wx = cam.cx + (sx - size.w / 2) / cam.zoom;
+  const wy = cam.cy + (sy - size.h / 2) / cam.zoom;
+  cam.zoom = z;
+  cam.cx = wx - (sx - size.w / 2) / z;
+  cam.cy = wy - (sy - size.h / 2) / z;
+}
+
 function onDown(e: PointerEvent): void {
-  drag = { x: e.clientX, y: e.clientY, cx: cam.cx, cy: cam.cy, moved: false };
-  canvasRef.value?.setPointerCapture(e.pointerId);
-  canvasRef.value?.classList.add('grabbing');
+  const canvas = canvasRef.value; if (!canvas) return;
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, canvasXY(e));
+  canvas.classList.add('grabbing');
+  if (pointers.size >= 2) {
+    drag = null;
+    pinch = { dist: twoFingers().dist, zoom: cam.zoom }; // start a pinch
+  } else {
+    const p = pointers.get(e.pointerId)!;
+    drag = { x: p.x, y: p.y, cx: cam.cx, cy: cam.cy, moved: false };
+  }
 }
 function onMove(e: PointerEvent): void {
-  if (!drag) return;
-  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-  if (Math.hypot(dx, dy) > 5) drag.moved = true;
-  cam.cx = drag.cx - dx / cam.zoom; cam.cy = drag.cy - dy / cam.zoom;
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, canvasXY(e));
+  if (pinch && pointers.size >= 2) {
+    const { mx, my, dist } = twoFingers();
+    zoomAt(clampZoom(pinch.zoom * (dist / pinch.dist)), mx, my);
+    return;
+  }
+  if (drag) {
+    const p = pointers.get(e.pointerId)!;
+    const dx = p.x - drag.x, dy = p.y - drag.y;
+    if (Math.hypot(dx, dy) > 5) drag.moved = true;
+    cam.cx = drag.cx - dx / cam.zoom; cam.cy = drag.cy - dy / cam.zoom;
+  }
 }
 function onUp(e: PointerEvent): void {
-  const wasDrag = drag?.moved; drag = null;
-  canvasRef.value?.classList.remove('grabbing');
-  if (wasDrag) return;
-  const canvas = canvasRef.value; if (!canvas) return;
-  const rect = canvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const canvas = canvasRef.value;
+  const lifted = pointers.get(e.pointerId);
+  pointers.delete(e.pointerId);
+  const wasDrag = drag?.moved, wasPinch = !!pinch;
+  if (pointers.size < 2) pinch = null;
+  if (pointers.size === 0) canvas?.classList.remove('grabbing');
+
+  // A finger still down after lifting another → resume panning from it (no jump, no select).
+  if (pointers.size >= 1) {
+    const [p] = [...pointers.values()];
+    drag = { x: p.x, y: p.y, cx: cam.cx, cy: cam.cy, moved: true };
+    return;
+  }
+  drag = null;
+  // Clean single tap (no pan, no pinch) selects the nearest node.
+  if (wasDrag || wasPinch || !lifted) return;
   let best: { id: number } | null = null, bd = Infinity;
-  for (const n of nodeScreen) { const d = Math.hypot(n.sx - mx, n.sy - my); if (d < bd) { bd = d; best = n; } }
+  for (const n of nodeScreen) { const d = Math.hypot(n.sx - lifted.x, n.sy - lifted.y); if (d < bd) { bd = d; best = n; } }
   if (best && bd <= 24) emit('select', best.id);
 }
 function onWheel(e: WheelEvent): void {
   e.preventDefault();
-  cam.zoom = Math.max(MIN_Z, Math.min(MAX_Z, cam.zoom * Math.exp(-e.deltaY * 0.0015)));
+  const r = canvasRef.value?.getBoundingClientRect();
+  const sx = r ? e.clientX - r.left : size.w / 2;
+  const sy = r ? e.clientY - r.top : size.h / 2;
+  zoomAt(clampZoom(cam.zoom * Math.exp(-e.deltaY * 0.0015)), sx, sy);
 }
 
 watch(() => props.view, indexNodes);
